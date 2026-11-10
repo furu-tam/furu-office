@@ -321,8 +321,17 @@ const coffeeSignTex = canvasTex(512, 160, (g, w, h) => {
 function paintDevSign(g, w, h, logo) {
   g.clearRect(0, 0, w, h);
   g.fillStyle = '#f6f8f7'; g.fillRect(0, 0, w, h);
+  const title = 'furuCRM';
+  const tag = "Let's dream with us!";
+  g.font = '700 78px monospace';
+  const titleW = g.measureText(title).width;
+  g.font = '400 28px sans-serif';
+  const textW = Math.max(titleW, g.measureText(tag).width);
+  const logoSize = logo ? Math.round(h * 0.72) : 0;
+  const gap = logo ? Math.round(h * 0.1) : 0;
+  let x = (w - logoSize - gap - textW) / 2;
+  const mid = h / 2;
   if (logo) {
-    const size = Math.round(h * 0.9);
     const c = document.createElement('canvas');
     c.width = logo.naturalWidth; c.height = logo.naturalHeight;
     const cg = c.getContext('2d');
@@ -331,11 +340,12 @@ function paintDevSign(g, w, h, logo) {
     const px = img.data;
     for (let i = 0; i < px.length; i += 4) px[i + 3] = Math.max(px[i], px[i + 1], px[i + 2]);
     cg.putImageData(img, 0, 0);
-    g.drawImage(c, (w - size) / 2, (h - size) / 2, size, size);
+    g.drawImage(c, x, mid - logoSize / 2, logoSize, logoSize);
+    x += logoSize + gap;
   }
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillStyle = '#142028'; g.font = '700 72px monospace'; g.fillText('furuCRM', w / 2, h * 0.44);
-  g.fillStyle = '#5a6b70'; g.font = '400 26px sans-serif'; g.fillText('Let\'s dream with us!', w / 2, h * 0.58);
+  g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.fillStyle = '#142028'; g.font = '700 78px monospace'; g.fillText(title, x, mid - h * 0.08);
+  g.fillStyle = '#5a6b70'; g.font = '400 28px sans-serif'; g.fillText(tag, x, mid + h * 0.1);
 }
 const devSignTex = canvasTex(1024, 512, (g, w, h) => paintDevSign(g, w, h, null), 'dev_sign');
 {
