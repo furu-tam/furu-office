@@ -94,9 +94,23 @@
     position: absolute; left: 6px; bottom: 6px; font: 800 11px var(--f-body);
     background: rgba(8, 28, 42, 0.78); color: var(--ink); padding: 2px 7px; border-radius: 999px;
   }
+  #uiToggle {
+    position: fixed; z-index: 8;
+    top: calc(env(safe-area-inset-top, 0px) + 16px);
+    right: max(16px, env(safe-area-inset-right));
+    display: flex; gap: 8px;
+  }
+  #uiToggle button {
+    font: 600 13px var(--f-body); color: var(--ink); background: var(--plate);
+    border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; cursor: pointer;
+    backdrop-filter: blur(8px);
+  }
+  #uiToggle button[aria-pressed="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  #uiToggle button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  body.menu-hidden .plate, body.menu-hidden .dock { display: none !important; }
   .chat {
-    position: fixed; z-index: 7; top: 16px; right: max(16px, env(safe-area-inset-right));
-    width: min(320px, calc(100vw - 28px)); height: min(420px, calc(100vh - 120px));
+    position: fixed; z-index: 7; top: calc(env(safe-area-inset-top, 0px) + 64px); right: max(16px, env(safe-area-inset-right));
+    width: min(320px, calc(100vw - 28px)); height: min(420px, calc(100vh - 168px));
     display: none; flex-direction: column;
     background: var(--plate); border: 1px solid var(--line); border-radius: 12px;
     backdrop-filter: blur(10px); overflow: hidden;
@@ -121,13 +135,15 @@
   }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .plate, .dock { z-index: 6; }
-  #btnChat { position: relative; }
-  #btnChat.has-note::after {
+  #btnChat, #btnChatToggle { position: relative; }
+  #btnChat.has-note::after, #btnChatToggle.has-note::after {
     content: attr(data-n); position: absolute; top: -7px; right: -2px;
     min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
     border-radius: 999px; background: #e07060; color: #fff; font-size: 11px; line-height: 18px;
   }
   @media (max-width: 720px) {
+    #uiToggle { left: max(8px, env(safe-area-inset-left)); right: auto; }
+    .plate { top: calc(env(safe-area-inset-top, 0px) + 60px); }
     .chat { top: auto; bottom: 74px; height: min(46vh, 340px); }
     #selfWrap { width: 84px; height: 112px; }
     .dock { flex-wrap: nowrap; justify-content: flex-start; width: calc(100% - 16px); max-width: calc(100% - 16px); overflow-x: auto; }
@@ -197,6 +213,10 @@
     <button type="submit">Gửi</button>
   </form>
 </aside>
+<div id="uiToggle">
+  <button type="button" id="btnMenu" aria-pressed="true">Ẩn menu</button>
+  <button type="button" id="btnChatToggle" aria-pressed="false">Hiện chat</button>
+</div>
 <div class="dock" id="dockView" role="group" aria-label="Chế độ xem">
   <button id="v3d" type="button" aria-pressed="true">Phối cảnh 3D</button>
   <button id="vplan" type="button" aria-pressed="false">Mặt bằng</button>
@@ -1300,7 +1320,7 @@ function enterDesk(index, slot) {
   mySlot = slot;
   const island = islands[index];
   document.body.classList.add('in-room');
-  document.body.classList.toggle('chat-open', innerWidth > 980);
+  applyChrome();
   $('dockView').hidden = true;
   $('dockRoom').hidden = false;
   $('btnTalk').hidden = false;
@@ -1343,7 +1363,8 @@ function leaveDesk(silent) {
   micOn = false;
   camOn = false;
   myIsland = 0;
-  document.body.classList.remove('in-room', 'chat-open');
+  document.body.classList.remove('in-room');
+  applyChrome();
   $('dockView').hidden = false;
   $('dockRoom').hidden = true;
   $('btnShare').hidden = true;
@@ -1686,10 +1707,11 @@ function onChat(cm) {
 let unreadChat = 0;
 function setChatNote(n) {
   unreadChat = n;
-  const btn = $('btnChat');
-  btn.classList.toggle('has-note', n > 0);
-  if (n > 0) btn.dataset.n = n > 9 ? '9+' : String(n);
-  else delete btn.dataset.n;
+  [$('btnChat'), $('btnChatToggle')].forEach((btn) => {
+    btn.classList.toggle('has-note', n > 0);
+    if (n > 0) btn.dataset.n = n > 9 ? '9+' : String(n);
+    else delete btn.dataset.n;
+  });
 }
 function clearChatNote() { setChatNote(0); }
 function refreshConnText() {
@@ -2209,10 +2231,34 @@ $('btnCam').addEventListener('click', () => {
   });
 });
 $('btnLeave').addEventListener('click', () => leaveDesk(false));
-$('btnChat').addEventListener('click', () => {
-  document.body.classList.toggle('chat-open');
-  if (document.body.classList.contains('chat-open')) clearChatNote();
-});
+let menuOpen = true;
+let preferChat = innerWidth > 980;
+try { menuOpen = localStorage.getItem('furu-office-menu') !== '0'; } catch (e) {}
+function applyChrome() {
+  document.body.classList.toggle('menu-hidden', !menuOpen);
+  document.body.classList.toggle('chat-open', myIsland !== 0 && preferChat);
+  $('btnMenu').textContent = menuOpen ? 'Ẩn menu' : 'Hiện menu';
+  $('btnMenu').setAttribute('aria-pressed', String(menuOpen));
+  const chatOn = document.body.classList.contains('chat-open');
+  $('btnChatToggle').textContent = chatOn ? 'Ẩn chat' : 'Hiện chat';
+  $('btnChatToggle').setAttribute('aria-pressed', String(chatOn));
+  $('btnChat').setAttribute('aria-pressed', String(chatOn));
+}
+function toggleMenu() {
+  menuOpen = !menuOpen;
+  try { localStorage.setItem('furu-office-menu', menuOpen ? '1' : '0'); } catch (e) {}
+  applyChrome();
+}
+function toggleChat() {
+  if (myIsland === 0) { toast('Ngồi vào một bàn để mở chat.'); return; }
+  preferChat = !document.body.classList.contains('chat-open');
+  if (preferChat) clearChatNote();
+  applyChrome();
+}
+applyChrome();
+$('btnMenu').addEventListener('click', toggleMenu);
+$('btnChatToggle').addEventListener('click', toggleChat);
+$('btnChat').addEventListener('click', toggleChat);
 $('chatForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const v = $('chatInput').value.trim();
