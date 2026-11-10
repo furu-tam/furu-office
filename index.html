@@ -142,7 +142,7 @@
 <div id="faces"></div>
 <div class="plate">
   <h1>Văn Phòng <span>furuCRM</span></h1>
-  <p>Tầng 3 · sàn 26 × 16 m · 38 chỗ ngồi<br>Ban công 26 m hướng biển · 2 nap pod</p>
+  <p>Tầng 3 · sàn 26 × 16 m · 44 chỗ ngồi<br>Ban công 26 m hướng biển · 2 nap pod</p>
   <p class="hint" id="hint">Bấm một bàn để ngồi · kéo để xoay</p>
   <div class="row">
     <label for="nameInput">Tên</label>
@@ -171,6 +171,7 @@
   <button type="button" class="talk" id="btnHear" hidden>Bấm để nghe</button>
   <button type="button" id="btnMic">Mic đang tắt</button>
   <button type="button" id="btnCam">Camera đang tắt</button>
+  <button type="button" id="btnShare" hidden>Chia sẻ màn hình</button>
   <button type="button" id="btnChat">Chat</button>
   <button type="button" class="leave" id="btnLeave">Rời bàn</button>
 </div>
@@ -582,6 +583,7 @@ const boat = new THREE.Group();
 // ---------- work desks you can sit at: 4 islands × 8 + 6 sea desks ----------
 const islands = [];
 const pickers = [];
+let meetingTvMat = null;
 let islandCursor = null;
 const facesEl = document.getElementById('faces');
 const deskTagsEl = document.getElementById('deskTags');
@@ -636,6 +638,33 @@ function registerSeat(deskGroup, prop) {
   deskGroup.add(picker);
   pickers.push(picker);
 }
+function addOpenSeat(x, z, yaw, parent) {
+  const slot = islandCursor.seats.length;
+  islandCursor.seats.push({ x, z, yaw, prop: null });
+  islandCursor.screens.push(faceDisc());
+  const picker = new THREE.Mesh(
+    new THREE.BoxGeometry(0.72, 1.2, 0.72),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+  );
+  picker.position.set(x, 0.75, z);
+  picker.userData.island = islands.length - 1;
+  picker.userData.slot = slot;
+  parent.add(picker);
+  pickers.push(picker);
+}
+function tagIsland(island, i) {
+  let sx = 0, sz = 0;
+  island.seats.forEach((s) => { sx += s.x; sz += s.z; });
+  island.center = new THREE.Vector3(sx / island.seats.length, 1.85, sz / island.seats.length);
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'dtag';
+  el.innerHTML = '<b>' + island.label + '</b>' + island.seats.length + ' chỗ';
+  el.title = island.zone;
+  el.addEventListener('click', (e) => { e.stopPropagation(); joinDesk(i, -1); });
+  deskTagsEl.appendChild(el);
+  island.tag = el;
+}
 
 // ---------- workspace: 4 bench clusters × 8 desks, dual monitors ----------
 function desk(parent, x, z, yaw, dual = true) {
@@ -672,19 +701,7 @@ for (let i = 0; i < 6; i++) {
   desk(G.sea_desks, x, -6.65, 0, false);
 }
 islandCursor = null;
-islands.forEach((island, i) => {
-  let sx = 0, sz = 0;
-  island.seats.forEach((s) => { sx += s.x; sz += s.z; });
-  island.center = new THREE.Vector3(sx / island.seats.length, 1.85, sz / island.seats.length);
-  const el = document.createElement('button');
-  el.type = 'button';
-  el.className = 'dtag';
-  el.innerHTML = '<b>' + island.label + '</b>' + island.seats.length + ' chỗ';
-  el.title = island.zone;
-  el.addEventListener('click', (e) => { e.stopPropagation(); joinDesk(i, -1); });
-  deskTagsEl.appendChild(el);
-  island.tag = el;
-});
+islands.forEach(tagIsland);
 
 // ---------- café: counter, espresso, window bar, tables ----------
 {
@@ -793,12 +810,19 @@ function sofa(parent, x, z, len, yaw) {
   glassWall(8, 4.3, 8, 8, 3, m, mat.glass, 1.2);
   box(3.0, 0.05, 1.15, mat.walnut, 10.5, 0.74, 5.6, m);
   for (const sx of [-1.2, 1.2]) box(0.06, 0.72, 0.9, mat.frame, 10.5 + sx, 0.36, 5.6, m);
+  startIsland('Phòng họp', '6 người · TV');
+  islandCursor.share = true;
   for (let i = 0; i < 3; i++) for (const s of [-1, 1]) {
     const x = 9.5 + i, z = 5.6 + s * 0.9;
     officeChair(m, x, z, s > 0 ? Math.PI : 0);
+    addOpenSeat(x, z, s > 0 ? Math.PI : 0, m);
   }
+  const meeting = islandCursor;
+  islandCursor = null;
+  tagIsland(meeting, islands.indexOf(meeting));
   box(1.7, 1.0, 0.05, mat.monitor, 10.5, 1.5, 7.88, m);
-  plane(1.62, 0.92, mat.tv, 10.5, 1.5, 7.85, Math.PI, m);
+  meetingTvMat = mat.tv.clone();
+  plane(1.62, 0.92, meetingTvMat, 10.5, 1.5, 7.85, Math.PI, m);
 }
 
 // ---------- phone booths ----------
@@ -940,6 +964,12 @@ let myPresence = null;
 let pendingPresence = null;
 let localStream = null;
 let micOn = false, camOn = false;
+let sharing = false;
+let screenStream = null;
+let screenTex = null;
+let screenVideo = null;
+let screenCall = null;
+const screenCalls = new Map();
 let audioCtx = null;
 let peers = {};
 let myPeer = null;
@@ -1105,9 +1135,20 @@ function placeOffice() {
 function sitCamera(seat) {
   camera = persp;
   labelsEl.hidden = true;
-  const s = Math.sin(seat.yaw), c = Math.cos(seat.yaw);
-  const eye = new THREE.Vector3(seat.x - s * 1.75, 1.62, seat.z - c * 1.75);
-  const look = new THREE.Vector3(seat.x + s * 0.4, 1.02, seat.z + c * 0.4);
+  const island = islandOf(myIsland);
+  let eye, look;
+  if (island && island.share) {
+    const tv = new THREE.Vector3(10.5, 1.35, 7.6);
+    const back = new THREE.Vector3(seat.x - 10.5, 0, seat.z - 7.6);
+    if (back.lengthSq() < 0.04) back.set(0, 0, 1);
+    back.normalize();
+    eye = new THREE.Vector3(seat.x, 1.62, seat.z).addScaledVector(back, 1.45);
+    look = tv;
+  } else {
+    const s = Math.sin(seat.yaw), c = Math.cos(seat.yaw);
+    eye = new THREE.Vector3(seat.x - s * 1.75, 1.62, seat.z - c * 1.75);
+    look = new THREE.Vector3(seat.x + s * 0.4, 1.02, seat.z + c * 0.4);
+  }
   controls.enabled = false;
   const tighten = () => {
     controls.enabled = true;
@@ -1158,10 +1199,15 @@ function enterDesk(index, slot) {
   $('btnTalk').hidden = false;
   $('btnHear').hidden = true;
   $('roomTitle').textContent = island.label + ' · ' + island.zone;
-  $('hint').textContent = 'Đang ngồi ' + island.label + ' (' + island.zone + ') · chỗ ' + slot + '/' + island.seats.length;
+  $('hint').textContent = island.share
+    ? 'Đang ở phòng họp · chỗ ' + slot + '/' + island.seats.length + ' · có thể chia sẻ màn hình'
+    : 'Đang ngồi ' + island.label + ' (' + island.zone + ') · chỗ ' + slot + '/' + island.seats.length;
+  $('btnShare').hidden = !island.share;
   $('chatMsgs').innerHTML = '';
-  sysMsg('Bạn đã ngồi ' + island.label + ', chỗ ' + slot + '. Bấm Bật tiếng để nói với cả đảo.');
-  toast('Đã ngồi. Bấm Bật tiếng khi muốn nói.', 3200);
+  sysMsg(island.share
+    ? 'Bạn đã vào phòng họp, chỗ ' + slot + '. Bấm Bật tiếng để nói, hoặc Chia sẻ màn hình để chiếu lên TV.'
+    : 'Bạn đã ngồi ' + island.label + ', chỗ ' + slot + '. Bấm Bật tiếng để nói với cả đảo.');
+  toast(island.share ? 'Đã vào phòng họp.' : 'Đã ngồi. Bấm Bật tiếng khi muốn nói.', 3200);
   updateSelf();
   syncControlButtons();
   refreshScreens();
@@ -1172,6 +1218,7 @@ function enterDesk(index, slot) {
 }
 function leaveDesk(silent) {
   if (myIsland === 0) return;
+  stopShare();
   claimGen++;
   peerOpening = null;
   broadcast({ kind: 'bye' });
@@ -1191,6 +1238,7 @@ function leaveDesk(silent) {
   document.body.classList.remove('in-room', 'chat-open');
   $('dockView').hidden = false;
   $('dockRoom').hidden = true;
+  $('btnShare').hidden = true;
   $('btnTalk').hidden = false;
   $('btnHear').hidden = true;
   setConn('on', 'Ngồi cùng đảo là nói chuyện được với đồng nghiệp');
@@ -1389,11 +1437,88 @@ async function ensureVideo() {
   if (!replaced) Promise.resolve(myPeer ? null : openTablePeer()).then(() => pushStream());
   return true;
 }
+function inMeeting() {
+  const island = islandOf(myIsland);
+  return !!(island && island.share);
+}
+function showMeetingScreen(stream, name) {
+  if (!meetingTvMat || !stream) return;
+  if (screenVideo) { try { screenVideo.pause(); screenVideo.srcObject = null; } catch (e) {} }
+  if (screenTex) screenTex.dispose();
+  const video = document.createElement('video');
+  video.autoplay = true; video.muted = true; video.playsInline = true;
+  video.srcObject = stream;
+  video.play().catch(() => {});
+  const tex = new THREE.VideoTexture(video);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  meetingTvMat.map = tex;
+  meetingTvMat.needsUpdate = true;
+  screenVideo = video;
+  screenTex = tex;
+  if (name && name !== myName()) toast(name + ' đang chia sẻ màn hình.', 2800);
+}
+function clearMeetingScreen() {
+  if (screenVideo) { try { screenVideo.pause(); screenVideo.srcObject = null; } catch (e) {} screenVideo = null; }
+  if (screenTex) { screenTex.dispose(); screenTex = null; }
+  screenCall = null;
+  if (meetingTvMat) { meetingTvMat.map = burndownTex; meetingTvMat.needsUpdate = true; }
+}
+function offerScreen(pid) {
+  if (!myPeer || !screenStream || !pid || pid === myPeer.id) return;
+  const prev = screenCalls.get(pid);
+  if (prev) { try { prev.close(); } catch (e) {} }
+  try {
+    const call = myPeer.call(pid, screenStream, { metadata: { kind: 'screen', name: myName() } });
+    if (call) screenCalls.set(pid, call);
+  } catch (e) {}
+}
+function offerScreenToRoom() {
+  people.forEach((row) => {
+    if (row.table !== myIsland || row.id === myId || !row.peerId) return;
+    offerScreen(String(row.peerId));
+  });
+}
+function stopShare() {
+  const was = sharing || !!screenStream;
+  const stream = screenStream;
+  sharing = false;
+  screenStream = null;
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  screenCalls.forEach((call) => { try { call.close(); } catch (e) {} });
+  screenCalls.clear();
+  clearMeetingScreen();
+  if ($('btnShare')) syncControlButtons();
+  if (was && myIsland > 0) broadcast({ kind: 'screen', on: false });
+}
+function startShare() {
+  if (!inMeeting()) return;
+  const md = navigator.mediaDevices;
+  if (!window.isSecureContext || !md || !md.getDisplayMedia) {
+    toast('Trình duyệt này không chia sẻ được màn hình.', 4200);
+    return;
+  }
+  md.getDisplayMedia({ video: true, audio: false }).then((stream) => {
+    if (!inMeeting()) { stream.getTracks().forEach((t) => t.stop()); return; }
+    if (screenStream) screenStream.getTracks().forEach((t) => t.stop());
+    screenStream = stream;
+    sharing = true;
+    const track = stream.getVideoTracks()[0];
+    if (track) track.addEventListener('ended', () => { if (screenStream === stream) stopShare(); });
+    showMeetingScreen(stream, myName());
+    syncControlButtons();
+    toast('Đang chiếu màn hình lên TV.');
+    sysMsg('Bạn đang chia sẻ màn hình.');
+    broadcast({ kind: 'screen', on: true, name: myName() });
+    offerScreenToRoom();
+  }).catch(() => toast('Chưa chia sẻ màn hình.', 2800));
+}
 function syncControlButtons() {
   $('btnMic').classList.toggle('off', !micOn);
   $('btnMic').textContent = micOn ? 'Mic đang bật' : 'Mic đang tắt';
   $('btnCam').classList.toggle('off', !camOn);
   $('btnCam').textContent = camOn ? 'Camera đang bật' : 'Camera đang tắt';
+  $('btnShare').classList.toggle('off', sharing);
+  $('btnShare').textContent = sharing ? 'Dừng chia sẻ' : 'Chia sẻ màn hình';
 }
 function sysMsg(text) {
   const box = $('chatMsgs');
@@ -1513,6 +1638,16 @@ function wireMyPeer() {
     wireConn(conn.peer, conn);
   });
   myPeer.on('call', (call) => {
+    if (call.metadata && call.metadata.kind === 'screen') {
+      if (!inMeeting()) { try { call.close(); } catch (e) {} return; }
+      try { call.answer(); } catch (e) {}
+      call.on('stream', (rs) => {
+        screenCall = call;
+        showMeetingScreen(rs, (call.metadata && call.metadata.name) || '');
+      });
+      call.on('close', () => { if (screenCall === call) clearMeetingScreen(); });
+      return;
+    }
     if (!call.peer || call.peer === myPeer.id || myIsland === 0) { try { call.close(); } catch (e) {} return; }
     try { if (localStream) call.answer(localStream); else call.answer(); }
     catch (e) { try { call.answer(); } catch (e2) {} }
@@ -1619,7 +1754,11 @@ function handleData(pid, m) {
     entry.micOn = m.mic !== false;
     entry.camOn = m.cam !== false;
     entry.greeted = true;
-    if (isNew) { sysMsg(entry.name + ' đã vào đảo.'); toast(entry.name + ' đã vào đảo.'); }
+    if (isNew) {
+      const place = (islandOf(myIsland) && islandOf(myIsland).label) || 'đảo';
+      sysMsg(entry.name + ' đã vào ' + place + '.');
+      toast(entry.name + ' đã vào ' + place + '.');
+    }
     refreshScreens();
     refreshConnText();
   } else if (m.kind === 'msg' && m.text) {
@@ -1628,6 +1767,8 @@ function handleData(pid, m) {
     entry.micOn = m.mic !== false;
     entry.camOn = m.cam !== false;
     refreshScreens();
+  } else if (m.kind === 'screen') {
+    if (!m.on && !sharing) clearMeetingScreen();
   } else if (m.kind === 'bye') removePeer(pid, true);
 }
 function sendTo(entry, obj) {
@@ -1663,6 +1804,7 @@ function sendPresence(msg) {
 function notePeer(who) {
   if (!who || who.id === myId || who.table !== myIsland || !who.peerId || !myPeer) return;
   dial(String(who.peerId), 0);
+  if (sharing && screenStream) offerScreen(String(who.peerId));
 }
 function applyPresence(msg, relay) {
   if (!msg) return;
@@ -1822,6 +1964,7 @@ $('btnMic').addEventListener('click', () => {
   refreshScreens();
   broadcast({ kind: 'state', mic: micOn, cam: camOn });
 });
+$('btnShare').addEventListener('click', () => { if (sharing) stopShare(); else startShare(); });
 $('btnCam').addEventListener('click', () => {
   if (camOn) {
     camOn = false;
