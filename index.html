@@ -74,6 +74,22 @@
   .who.me { border-color: var(--accent); }
   .dock button.talk { background: #164e56; border-color: var(--accent); }
   .dock button.off { background: #8a3b32; border-color: #e07060; }
+  .mic {
+    display: inline-flex; align-items: flex-end; gap: 1.5px; height: 13px;
+    margin-right: 6px; vertical-align: -2px; color: inherit; opacity: 0.72;
+  }
+  .mic svg { width: 11px; height: 13px; fill: currentColor; align-self: center; flex: none; }
+  .mic i {
+    width: 2px; height: 11px; border-radius: 2px; background: currentColor;
+    transform: scaleY(0.25); transform-origin: center bottom;
+  }
+  .speaking .mic { opacity: 1; color: var(--accent); }
+  .dock button.speaking { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(63, 208, 192, 0.32); }
+  .who.speaking, .facename.speaking { border-color: var(--accent); }
+  #selfWrap.speaking { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(63, 208, 192, 0.4), 0 10px 28px rgba(0, 0, 0, 0.35); }
+  #selfWrap .mic { height: 11px; margin-right: 4px; }
+  #selfWrap .mic svg { width: 10px; height: 11px; }
+  #selfWrap .mic i { height: 10px; }
   .dock button.leave { color: #ffc2b8; border-color: rgba(224, 112, 96, 0.75); }
   #selfWrap {
     position: fixed; z-index: 6; display: none;
@@ -700,7 +716,7 @@ function faceDisc() {
   tag.className = 'facename';
   tag.hidden = true;
   facesEl.appendChild(tag);
-  g.userData = { video, videoTex, face, tag, avatarTex: null, avatarName: '' };
+  g.userData = { video, videoTex, face, frame, tag, avatarTex: null, avatarName: '' };
   return g;
 }
 function startIsland(label, zone) {
@@ -1171,6 +1187,9 @@ let screenVideo = null;
 let screenCall = null;
 const screenCalls = new Map();
 let audioCtx = null;
+let localMeter = null;
+const remoteMeters = new Map();
+const MIC_HTML = '<span class="mic" hidden aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5.3-3A5.3 5.3 0 0 1 12 16.2 5.3 5.3 0 0 1 6.7 11H5a7 7 0 0 0 6 6.7V21h2v-3.3A7 7 0 0 0 19 11h-1.7z"/></svg><i></i><i></i><i></i></span>';
 let peers = {};
 let myPeer = null;
 let claimGen = 0;
@@ -1263,7 +1282,8 @@ function upsertSeat(info) {
   if (info.peerId) row.peerId = String(info.peerId);
   const mine = info.id === myId;
   row.el.classList.toggle('me', mine);
-  row.el.textContent = row.name + (mine ? ' · bạn' : '');
+  ensureMicTag(row.el);
+  row.el.querySelector('.nm').textContent = row.name + (mine ? ' · bạn' : '');
   if (prev) setProp(prev.table, prev.slot, true);
   setProp(row.table, row.slot, false);
   const sitY = seat.y || 0;
@@ -1464,6 +1484,10 @@ function leaveDesk(silent) {
   if (localStream) { localStream.getTracks().forEach((tr) => tr.stop()); localStream = null; }
   remoteAudio.forEach((a) => { try { a.pause(); a.srcObject = null; a.remove(); } catch (e) {} });
   remoteAudio.clear();
+  releaseMeter(localMeter);
+  localMeter = null;
+  remoteMeters.forEach(releaseMeter);
+  remoteMeters.clear();
   micOn = false;
   camOn = false;
   myIsland = 0;
@@ -1531,7 +1555,8 @@ function refreshScreens() {
     screen.visible = true;
     const name = (peer && peer.name) || row.name || 'Bạn';
     const micOff = peer ? peer.micOn === false : false;
-    screen.userData.tag.textContent = name + (micOff ? ' · mic tắt' : '');
+    ensureMicTag(screen.userData.tag);
+    screen.userData.tag.querySelector('.nm').textContent = name + (micOff ? ' · mic tắt' : '');
     const face = screen.userData.face;
     const stream = peer && peer.remoteStream;
     const hasVideo = stream && peer.camOn !== false && stream.getVideoTracks().some((t) => t.readyState === 'live');
@@ -1587,6 +1612,110 @@ function unlockAudio() {
   remoteAudio.forEach((audio) => {
     const goPlay = audio.play();
     if (goPlay && goPlay.then) goPlay.then(() => { $('btnHear').hidden = true; }).catch(() => { $('btnHear').hidden = false; });
+  });
+}
+function ensureMicTag(el) {
+  if (!el || el.querySelector('.nm')) return;
+  el.textContent = '';
+  el.insertAdjacentHTML('afterbegin', MIC_HTML);
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  el.appendChild(nm);
+}
+function releaseMeter(meter) {
+  if (!meter) return;
+  try { meter.src.disconnect(); } catch (e) {}
+}
+function makeMeter(stream) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC || !stream || !stream.getAudioTracks().length) return null;
+  try {
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const src = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.5;
+    src.connect(analyser);
+    return { stream, src, analyser, data: new Uint8Array(analyser.fftSize) };
+  } catch (e) { return null; }
+}
+function rmsOf(meter) {
+  meter.analyser.getByteTimeDomainData(meter.data);
+  let sum = 0;
+  const d = meter.data;
+  for (let i = 0; i < d.length; i++) {
+    const v = (d[i] - 128) / 128;
+    sum += v * v;
+  }
+  return Math.sqrt(sum / d.length);
+}
+function voiceLevel(rms) {
+  const n = (rms - 0.012) / 0.05;
+  return n <= 0 ? 0 : n >= 1 ? 1 : n;
+}
+function setTalking(el, level, live) {
+  if (!el) return;
+  const mic = el.querySelector('.mic');
+  if (!mic) return;
+  mic.hidden = !live;
+  if (!live) { el.classList.remove('speaking'); el._spoke = 0; return; }
+  if (level > 0.08) el._spoke = performance.now();
+  const speaking = !!(el._spoke && performance.now() - el._spoke < 340);
+  el.classList.toggle('speaking', speaking);
+  const lift = speaking ? level : 0;
+  const shape = [0.55, 1, 0.68];
+  const bars = mic.querySelectorAll('i');
+  bars.forEach((bar, i) => {
+    const wobble = speaking && !REDUCED ? 0.12 * Math.sin(T.value * (8 + i * 2) + i) : 0;
+    bar.style.transform = 'scaleY(' + Math.max(0.22, Math.min(1, 0.25 + shape[i] * lift + wobble * lift)).toFixed(3) + ')';
+  });
+  const svg = mic.querySelector('svg');
+  if (svg) svg.style.transform = 'scale(' + (1 + lift * 0.16).toFixed(3) + ')';
+}
+function updateVoiceMeters() {
+  const localLive = !!(micOn && localStream && localStream.getAudioTracks().some((t) => t.enabled && t.readyState === 'live'));
+  let localLevel = 0;
+  if (localLive) {
+    if (!localMeter || localMeter.stream !== localStream) {
+      releaseMeter(localMeter);
+      localMeter = makeMeter(localStream);
+    }
+    if (localMeter) localLevel = voiceLevel(rmsOf(localMeter));
+  } else if (localMeter) {
+    releaseMeter(localMeter);
+    localMeter = null;
+  }
+  setTalking($('btnMic'), localLevel, localLive);
+  setTalking($('selfWrap'), localLevel, localLive);
+  const me = people.get(myId);
+  if (me) setTalking(me.el, localLevel, localLive);
+  const heard = new Set();
+  people.forEach((row) => {
+    if (row.id === myId) return;
+    const peer = row.peerId ? peers[row.peerId] : null;
+    const stream = peer && peer.remoteStream;
+    const live = !!(peer && peer.micOn !== false && stream && stream.getAudioTracks().some((t) => t.readyState === 'live'));
+    let level = 0;
+    if (live) {
+      heard.add(stream.id);
+      let meter = remoteMeters.get(stream.id);
+      if (!meter) {
+        meter = makeMeter(stream);
+        if (meter) remoteMeters.set(stream.id, meter);
+      }
+      if (meter) level = voiceLevel(rmsOf(meter));
+    }
+    setTalking(row.el, level, live);
+    const island = islandOf(row.table);
+    const screen = island && island.screens[row.slot - 1];
+    if (!screen) return;
+    const show = live && row.table === myIsland;
+    setTalking(screen.userData.tag, level, show);
+    if (screen.userData.frame) screen.userData.frame.material.color.setHex(show && screen.userData.tag.classList.contains('speaking') ? 0x3fd0c0 : 0x102028);
+  });
+  remoteMeters.forEach((meter, id) => {
+    if (!heard.has(id)) { releaseMeter(meter); remoteMeters.delete(id); }
   });
 }
 function playRemoteAudio(stream) {
@@ -1787,12 +1916,23 @@ function startShare() {
 }
 function syncControlButtons() {
   $('btnMic').classList.toggle('off', !micOn);
-  $('btnMic').textContent = micOn ? 'Mic đang bật' : 'Mic đang tắt';
+  $('btnMic').querySelector('.mic-label').textContent = micOn ? 'Mic đang bật' : 'Mic đang tắt';
   $('btnCam').classList.toggle('off', !camOn);
   $('btnCam').textContent = camOn ? 'Camera đang bật' : 'Camera đang tắt';
   $('btnShare').classList.toggle('off', sharing);
   $('btnShare').textContent = sharing ? 'Dừng chia sẻ' : 'Chia sẻ màn hình';
 }
+(function prepMicButton() {
+  const btn = $('btnMic');
+  const label = document.createElement('span');
+  label.className = 'mic-label';
+  label.textContent = btn.textContent.trim();
+  btn.textContent = '';
+  btn.insertAdjacentHTML('afterbegin', MIC_HTML);
+  btn.appendChild(label);
+  const badge = $('selfWrap').querySelector('span');
+  if (badge) badge.insertAdjacentHTML('afterbegin', MIC_HTML);
+})();
 function sysMsg(text) {
   const box = $('chatMsgs');
   const d = document.createElement('div');
@@ -2496,6 +2636,7 @@ renderer.setAnimationLoop(() => {
     }
   }
   placeOffice();
+  updateVoiceMeters();
   renderer.render(scene, camera);
 });
 </script>
