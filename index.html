@@ -223,6 +223,7 @@
   <button id="vsea" type="button" aria-pressed="false">Ngắm biển</button>
   <button id="vcafe" type="button" aria-pressed="false">Góc cà phê</button>
   <button id="vlounge" type="button" aria-pressed="false">Góc nghỉ</button>
+  <button id="btnFish" type="button" aria-pressed="false">Ngắm cá</button>
 </div>
 <div class="dock" id="dockRoom" hidden>
   <button type="button" class="talk" id="btnTalk">Bật tiếng</button>
@@ -663,6 +664,11 @@ const pickers = [];
 let meetingTvMat = null;
 let meetingTvMesh = null;
 let securityTag = null;
+let fishTag = null;
+let watchingFish = false;
+let fishPose = null;
+const fishSwimmers = [];
+const fishBubbles = [];
 let inSecurity = false;
 let securityPose = null;
 let securityBlocked = false;
@@ -957,6 +963,63 @@ const rackMats = [];
   box(2.4, 1.05, 0.6, mat.white, -1.8, 0.525, 6.9, r);
   box(2.5, 0.05, 0.7, mat.walnut, -1.8, 1.07, 6.9, r);
   officeChair(r, -1.8, 7.5, Math.PI);
+  const tank = new THREE.Group(); tank.position.set(-1.8, 1.095, 6.78); r.add(tank);
+  const tw = 0.92, th = 0.46, td = 0.34;
+  box(tw, 0.028, td, mat.frame, 0, 0.014, 0, tank);
+  box(tw, 0.02, td, mat.frame, 0, th, 0, tank);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(0.025, th, 0.025, mat.frame, sx * (tw / 2 - 0.012), th / 2, sz * (td / 2 - 0.012), tank);
+  const tankGlass = new THREE.Mesh(
+    new THREE.BoxGeometry(tw - 0.04, th - 0.05, td - 0.04),
+    new THREE.MeshStandardMaterial({ color: 0xc6eef6, transparent: true, opacity: 0.22, roughness: 0.04, metalness: 0.05, depthWrite: false, side: THREE.DoubleSide })
+  );
+  tankGlass.position.y = th / 2; tank.add(tankGlass);
+  const water = new THREE.Mesh(
+    new THREE.BoxGeometry(tw - 0.08, th - 0.12, td - 0.08),
+    new THREE.MeshStandardMaterial({ color: 0x1a88b0, transparent: true, opacity: 0.34, roughness: 0.08, depthWrite: false })
+  );
+  water.position.y = th / 2 - 0.02; tank.add(water);
+  box(tw - 0.1, 0.045, td - 0.1, mat.sand, 0, 0.05, 0, tank);
+  const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.055, 0), M(0x8a8178, 0.85));
+  rock.position.set(-0.2, 0.09, 0.02); rock.castShadow = true; tank.add(rock);
+  const kelp = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.16, 5), mat.leaf);
+  kelp.position.set(0.22, 0.14, -0.02); tank.add(kelp);
+  const kelp2 = kelp.clone(); kelp2.scale.set(0.7, 0.75, 0.7); kelp2.position.set(0.16, 0.11, 0.04); tank.add(kelp2);
+  const fishMat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.35, emissive: color, emissiveIntensity: 0.16 });
+  for (const [i, color] of [0xff8a5b, 0xf2c14e, 0x3fd0c0, 0xf4f7f8, 0x7a5cc4].entries()) {
+    const fish = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.04, 14, 10), fishMat(color));
+    body.scale.set(1.8, 0.62, 0.5); fish.add(body);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.055, 6), fishMat(color));
+    tail.rotation.z = Math.PI / 2; tail.position.x = -0.065; fish.add(tail);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.007, 8, 6), M(0x102028, 0.3));
+    eye.position.set(0.05, 0.01, 0.016); fish.add(eye);
+    tank.add(fish);
+    fishSwimmers.push({ mesh: fish, tail, phase: i * 1.27, speed: 0.62 + i * 0.11, rx: 0.28 - (i % 2) * 0.05, rz: 0.07 + (i % 3) * 0.015, y: 0.16 + (i % 4) * 0.055, bob: 0.025 });
+  }
+  for (let i = 0; i < 6; i++) {
+    const bubble = new THREE.Mesh(
+      new THREE.SphereGeometry(0.007 + (i % 3) * 0.003, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xe7fbff, transparent: true, opacity: 0.6, roughness: 0.05, depthWrite: false })
+    );
+    tank.add(bubble);
+    fishBubbles.push({ mesh: bubble, phase: i * 1.6, x: (i - 2.5) * 0.07 });
+  }
+  const fishPicker = new THREE.Mesh(
+    new THREE.BoxGeometry(tw, th, td),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+  );
+  fishPicker.position.y = th / 2;
+  fishPicker.userData.fish = true;
+  tank.add(fishPicker);
+  pickers.push(fishPicker);
+  const fishBtn = document.createElement('button');
+  fishBtn.type = 'button';
+  fishBtn.className = 'dtag';
+  fishBtn.innerHTML = '<b>Hồ cá</b>ngắm cá';
+  fishBtn.title = 'Ngắm cá';
+  fishBtn.addEventListener('click', (e) => { e.stopPropagation(); enterFish(); });
+  deskTagsEl.appendChild(fishBtn);
+  fishTag = { el: fishBtn, v: new THREE.Vector3(-1.8, 1.72, 6.78) };
   plane(2.4, 1.2, mat.devSign, 2.2, 1.9, 7.82, Math.PI, r);
   sofa(r, 4.6, 7.4, 2.2, Math.PI);
 }
@@ -1034,7 +1097,7 @@ const ZONES = [
   ['Phòng họp', '6 người · TV', [10.5, 1, 5.6]],
   ['Phone booth', '×2', [-11.2, 1, 1.1]],
   ['Phòng server', '4 rack', [-11.2, 1, 6.1]],
-  ['Lễ tân', 'lối vào', [-2.2, 1, 6.6]],
+  ['Lễ tân', 'hồ cá · lối vào', [-1.8, 1, 6.6]],
   ['Ban công', 'ghế nằm · bàn cà phê', [2, 1, -9.4], 'warm'],
   ['Security', 'tra cứu', [11.85, 1, -6.25]],
 ];
@@ -1057,6 +1120,7 @@ let myIsland = 0;
 let hoveredIsland = -1;
 const buttons = [...document.querySelectorAll('#dockView button')];
 function go(id) {
+  endFishWatch();
   buttons.forEach(b => b.setAttribute('aria-pressed', String(b.id === id)));
   if (id === 'vplan') {
     camera = ortho; controls.enabled = false; labelsEl.hidden = false; tween = null;
@@ -1069,7 +1133,7 @@ function go(id) {
   if (REDUCED) { persp.position.copy(p1); controls.target.copy(t1); tween = null; return; }
   tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1, t1, s: 0 };
 }
-buttons.forEach(b => b.addEventListener('click', () => go(b.id)));
+buttons.forEach(b => { if (b.id !== 'btnFish') b.addEventListener('click', () => go(b.id)); });
 controls.addEventListener('start', () => { tween = null; });
 
 function resize() {
@@ -1241,6 +1305,12 @@ function placeOffice() {
       securityTag.el.style.left = ((_pt.x + 1) / 2 * w) + 'px';
       securityTag.el.style.top = ((1 - _pt.y) / 2 * h) + 'px';
     }
+    if (fishTag) {
+      _pt.copy(fishTag.v).project(camera);
+      fishTag.el.hidden = watchingFish || _pt.z > 1;
+      fishTag.el.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+      fishTag.el.style.top = ((1 - _pt.y) / 2 * h) + 'px';
+    }
     islands.forEach((island, i) => {
       _pt.copy(island.center).project(camera);
       island.tag.hidden = _pt.z > 1;
@@ -1339,6 +1409,7 @@ function joinDesk(index, prefer) {
   enterDesk(index, slot);
 }
 function enterDesk(index, slot) {
+  endFishWatch();
   myIsland = index + 1;
   mySlot = slot;
   const island = islands[index];
@@ -2135,6 +2206,7 @@ canvas.addEventListener('pointerup', (e) => {
   }
   if (myIsland !== 0 || inSecurity) return;
   const hit = raycaster.intersectObjects(pickers, false)[0];
+  if (hit && hit.object.userData.fish) { enterFish(); return; }
   if (hit && hit.object.userData.security) { enterSecurity(); return; }
   if (hit) joinDesk(hit.object.userData.island, hit.object.userData.slot);
 });
@@ -2153,7 +2225,7 @@ canvas.addEventListener('pointermove', (e) => {
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hit = raycaster.intersectObjects(pickers, false)[0];
-  if (hit && hit.object.userData.security) {
+  if (hit && (hit.object.userData.fish || hit.object.userData.security)) {
     hoveredIsland = -1; ring.visible = false; canvas.style.cursor = 'pointer'; return;
   }
   hoveredIsland = hit ? hit.object.userData.island : -1;
@@ -2191,10 +2263,52 @@ $('tvFullClose').addEventListener('click', closeTvFull);
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) $('tvFull').hidden = true; });
 addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (watchingFish) { leaveFish(); return; }
   if (inSecurity) { leaveSecurity(); return; }
   if (!$('tvFull').hidden) closeTvFull();
 });
+function endFishWatch() {
+  if (!watchingFish) return;
+  watchingFish = false;
+  fishPose = null;
+  controls.minDistance = 1;
+  controls.maxDistance = 90;
+  controls.maxPolarAngle = Math.PI * 0.495;
+  const fishBtn = $('btnFish');
+  if (fishBtn) fishBtn.setAttribute('aria-pressed', 'false');
+}
+function enterFish() {
+  if (watchingFish) { leaveFish(); return; }
+  if (myIsland !== 0) { toast('Rời bàn trước khi ngắm cá.'); return; }
+  if (inSecurity) return;
+  watchingFish = true;
+  camera = persp;
+  labelsEl.hidden = true;
+  ring.visible = false;
+  fishPose = { p: persp.position.clone(), t: controls.target.clone() };
+  buttons.forEach(b => b.setAttribute('aria-pressed', String(b.id === 'btnFish')));
+  const eye = new THREE.Vector3(-1.8, 1.42, 5.95);
+  const look = new THREE.Vector3(-1.8, 1.28, 6.78);
+  controls.enabled = false;
+  if (REDUCED) {
+    persp.position.copy(eye); controls.target.copy(look); tween = null;
+    controls.enabled = true;
+    controls.minDistance = 0.45; controls.maxDistance = 1.8; controls.maxPolarAngle = Math.PI * 0.7;
+  } else tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1: eye, t1: look, s: 0, fish: true };
+  $('hint').textContent = 'Ngắm cá · kéo để xoay quanh hồ · Esc để trở lại';
+}
+function leaveFish() {
+  if (!watchingFish) return;
+  const pose = fishPose;
+  endFishWatch();
+  $('hint').textContent = 'Bấm một bàn để ngồi · kéo để xoay';
+  if (!pose) { controls.enabled = true; return; }
+  controls.enabled = true;
+  if (REDUCED) { persp.position.copy(pose.p); controls.target.copy(pose.t); tween = null; return; }
+  tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1: pose.p, t1: pose.t, s: 0 };
+}
 function enterSecurity() {
+  endFishWatch();
   if (inSecurity) return;
   if (myIsland !== 0) { toast('Rời bàn trước khi vào Security.'); return; }
   inSecurity = true;
@@ -2268,6 +2382,7 @@ $('btnCam').addEventListener('click', () => {
   });
 });
 $('btnLeave').addEventListener('click', () => leaveDesk(false));
+$('btnFish').addEventListener('click', () => { if (watchingFish) leaveFish(); else enterFish(); });
 let menuOpen = true;
 let preferChat = innerWidth > 980;
 try { menuOpen = localStorage.getItem('furu-office-menu') !== '0'; } catch (e) {}
@@ -2339,6 +2454,22 @@ renderer.setAnimationLoop(() => {
   T.value += dt; seaMat.uniforms.uT.value = T.value;
   boat.position.x = -60 + ((T.value * 1.2) % 140); boat.rotation.z = Math.sin(T.value * 0.9) * 0.04;
   rackMats.forEach((m, i) => { m.emissiveIntensity = 1.0 + 0.35 * Math.sin(T.value * (5 + i) + i); });
+  const ft = T.value;
+  fishSwimmers.forEach((f) => {
+    const a = ft * f.speed + f.phase;
+    const x = Math.cos(a) * f.rx;
+    const z = Math.sin(a * 2) * f.rz;
+    const y = f.y + Math.sin(a * 1.7) * f.bob;
+    const dx = x - f.mesh.position.x, dz = z - f.mesh.position.z;
+    f.mesh.position.set(x, y, z);
+    if (dx * dx + dz * dz > 1e-8) f.mesh.rotation.y = Math.atan2(-dz, dx);
+    f.tail.rotation.y = Math.sin(ft * 9 + f.phase) * 0.55;
+  });
+  fishBubbles.forEach((b) => {
+    const u = (ft * 0.18 + b.phase) % 1;
+    b.mesh.position.set(b.x + Math.sin(ft * 1.3 + b.phase) * 0.02, 0.07 + u * 0.32, Math.cos(ft * 0.8 + b.phase) * 0.035);
+    b.mesh.scale.setScalar(0.7 + u * 0.6);
+  });
 
   if (tween) {
     tween.s = Math.min(1, tween.s + dt / 1.4);
@@ -2346,12 +2477,13 @@ renderer.setAnimationLoop(() => {
     persp.position.lerpVectors(tween.p0, tween.p1, e); controls.target.lerpVectors(tween.t0, tween.t1, e);
     if (tween.s >= 1) {
       const sit = tween.sit;
+      const fish = tween.fish;
       tween = null;
-      if (sit) {
+      if (sit || fish) {
         controls.enabled = true;
-        controls.minDistance = 0.8;
-        controls.maxDistance = 3.4;
-        controls.maxPolarAngle = Math.PI * 0.62;
+        controls.minDistance = fish ? 0.45 : 0.8;
+        controls.maxDistance = fish ? 1.8 : 3.4;
+        controls.maxPolarAngle = fish ? Math.PI * 0.7 : Math.PI * 0.62;
       }
     }
   }
