@@ -2178,10 +2178,9 @@ function leaveSecurity() {
 $('secureExit').addEventListener('click', leaveSecurity);
 $('secureFrame').addEventListener('load', () => {
   const frame = $('secureFrame');
-  let blocked = false;
+  let blocked = true;
   try {
-    const doc = frame.contentDocument;
-    blocked = !doc || !doc.location || doc.location.href === 'about:blank';
+    blocked = !frame.contentWindow || frame.contentWindow.location.href === 'about:blank';
   } catch (e) { blocked = false; }
   securityBlocked = blocked;
   frame.hidden = blocked;
