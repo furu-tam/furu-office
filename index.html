@@ -134,16 +134,24 @@
     .dock button { flex: none; }
   }
   #err { position: fixed; inset: auto 16px 50% 16px; text-align: center; }
+  #crosshair {
+    display: none; position: fixed; z-index: 5; left: 50%; top: 50%;
+    width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.9); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+  }
+  body.walking #crosshair { display: block; }
 </style>
 
-<canvas id="stage" aria-label="Văn phòng Gió Biển. Bấm một đảo bàn làm việc để ngồi, rồi bật tiếng và camera với người cùng đảo."></canvas>
+<canvas id="stage" aria-label="Văn phòng furuCRM. WASD để đi trong phòng, click để xoay nhìn, bấm một bàn để ngồi."></canvas>
+<div id="crosshair"></div>
 <div id="labels" hidden></div>
 <div id="deskTags"></div>
 <div id="faces"></div>
 <div class="plate">
   <h1>Văn Phòng <span>furuCRM</span></h1>
   <p>Tầng 3 · sàn 26 × 16 m · 38 chỗ ngồi<br>Ban công 26 m hướng biển · 2 nap pod</p>
-  <p class="hint" id="hint">Bấm một bàn để ngồi · kéo để xoay</p>
+  <p class="hint" id="hint">Bấm một bàn để ngồi · WASD để đi · kéo để xoay</p>
   <div class="row">
     <label for="nameInput">Tên</label>
     <input id="nameInput" type="text" maxlength="24" placeholder="Tên của bạn" autocomplete="off" />
@@ -161,6 +169,7 @@
 </aside>
 <div class="dock" id="dockView" role="group" aria-label="Chế độ xem">
   <button id="v3d" type="button" aria-pressed="true">Phối cảnh 3D</button>
+  <button id="vwalk" type="button" aria-pressed="false">Đi bộ</button>
   <button id="vplan" type="button" aria-pressed="false">Mặt bằng</button>
   <button id="vsea" type="button" aria-pressed="false">Ngắm biển</button>
   <button id="vcafe" type="button" aria-pressed="false">Góc cà phê</button>
@@ -207,6 +216,8 @@ persp.position.set(-17, 14, -24);
 const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
 ortho.position.set(0, 60, -1); ortho.up.set(0, 0, -1); ortho.lookAt(0, 0, -1);
 let camera = persp;
+let walking = false;
+let yaw = 0, pitch = 0;
 const controls = new OrbitControls(persp, canvas);
 controls.target.set(0, 0, 0); controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.495; controls.minDistance = 1; controls.maxDistance = 90;
@@ -897,6 +908,8 @@ let myIsland = 0;
 let hoveredIsland = -1;
 const buttons = [...document.querySelectorAll('#dockView button')];
 function go(id) {
+  if (id === 'vwalk') { startWalk(); return; }
+  stopWalk();
   buttons.forEach(b => b.setAttribute('aria-pressed', String(b.id === id)));
   if (id === 'vplan') {
     camera = ortho; controls.enabled = false; labelsEl.hidden = false; tween = null;
@@ -904,7 +917,7 @@ function go(id) {
     return;
   }
   camera = persp; controls.enabled = myIsland === 0; labelsEl.hidden = true;
-  if (myIsland === 0) document.getElementById('hint').textContent = 'Bấm một bàn để ngồi · kéo để xoay';
+  if (myIsland === 0) document.getElementById('hint').textContent = 'Bấm một bàn để ngồi · WASD để đi · kéo để xoay';
   const v = VIEWS[id], p1 = new THREE.Vector3(...v.p), t1 = new THREE.Vector3(...v.t);
   if (REDUCED) { persp.position.copy(p1); controls.target.copy(t1); tween = null; return; }
   tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1, t1, s: 0 };
@@ -915,7 +928,7 @@ controls.addEventListener('start', () => { tween = null; });
 function resize() {
   const w = innerWidth, h = innerHeight, a = w / h;
   renderer.setSize(w, h, false);
-  persp.aspect = a; persp.fov = a < 0.8 ? 62 : 45; persp.updateProjectionMatrix();
+  persp.aspect = a; persp.fov = walking ? 72 : (a < 0.8 ? 62 : 45); persp.updateProjectionMatrix();
   const halfH = Math.max(11.5, 14.5 / a) * 1.22;
   Object.assign(ortho, { left: -halfH * a, right: halfH * a, top: halfH, bottom: -halfH }); ortho.updateProjectionMatrix();
 }
@@ -1148,6 +1161,7 @@ function joinDesk(index, prefer) {
   enterDesk(index, slot);
 }
 function enterDesk(index, slot) {
+  stopWalk();
   myIsland = index + 1;
   mySlot = slot;
   const island = islands[index];
@@ -1777,7 +1791,7 @@ const pointer = new THREE.Vector2();
 let down = null;
 canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
 canvas.addEventListener('pointerup', (e) => {
-  if (!down || myIsland !== 0) { down = null; return; }
+  if (!down || myIsland !== 0 || walking) { down = null; return; }
   const dx = e.clientX - down.x, dy = e.clientY - down.y;
   down = null;
   if (dx * dx + dy * dy > 36) return;
@@ -1788,7 +1802,7 @@ canvas.addEventListener('pointerup', (e) => {
   if (hit) joinDesk(hit.object.userData.island, hit.object.userData.slot);
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (myIsland !== 0) { hoveredIsland = -1; ring.visible = false; canvas.style.cursor = ''; return; }
+  if (myIsland !== 0 || walking) { hoveredIsland = -1; ring.visible = false; canvas.style.cursor = walking ? 'none' : ''; return; }
   pointer.x = (e.clientX / innerWidth) * 2 - 1;
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
@@ -1880,6 +1894,128 @@ addEventListener('beforeunload', () => {
 });
 loadPeerLib().then((ok) => { if (ok) claimFloor(); });
 
+// ---------- first-person walk: WASD, mouse look ----------
+const keys = new Set();
+const BLOCKS = [
+  [-6.5, -2.2, 0.34, 0.34], [6.5, -2.2, 0.34, 0.34], [-6.5, 6.4, 0.34, 0.34], [6.5, 6.4, 0.34, 0.34],
+  [-4, 0, 2.5, 0.95], [3, 0, 2.5, 0.95], [-4, 4, 2.5, 0.95], [3, 4, 2.5, 0.95],
+  [0, -6.65, 4.3, 0.42],
+  [-12.35, -4.6, 0.5, 2.15],
+  [-1.8, 6.85, 1.35, 0.42],
+  [10.5, 5.6, 1.65, 0.7],
+  [8.2, -3.4, 2.55, 0.55], [11.85, -5.6, 0.55, 1.7],
+  [-11.2, 6.3, 1.6, 1.35],
+  [-12.25, 0.4, 0.7, 0.72], [-12.25, 1.85, 0.7, 0.72],
+  [11.8, -1.25, 1.15, 0.7], [11.8, 1.25, 1.15, 0.7],
+  [10.5, 3, 2.5, 0.1], [8, 6.15, 0.1, 1.85],
+];
+function onFloor(x, z) {
+  const room = x > -12.55 && x < 12.55 && z > -7.75 && z < 7.55;
+  const balcony = x > -12.7 && x < 12.7 && z >= -10.35 && z <= -7.75;
+  return room || balcony;
+}
+function blocked(x, z) {
+  if (!onFloor(x, z)) return true;
+  const R = 0.28;
+  for (let i = 0; i < BLOCKS.length; i++) {
+    const b = BLOCKS[i];
+    if (Math.abs(x - b[0]) < b[2] + R && Math.abs(z - b[1]) < b[3] + R) return true;
+  }
+  return false;
+}
+function applyPov() {
+  persp.rotation.order = 'YXZ';
+  persp.rotation.set(pitch, yaw, 0);
+  const ahead = new THREE.Vector3(-Math.sin(yaw), Math.sin(pitch), -Math.cos(yaw));
+  controls.target.copy(persp.position).add(ahead);
+}
+function startWalk() {
+  if (myIsland !== 0) return;
+  if (walking) { go('v3d'); return; }
+  tween = null;
+  camera = persp;
+  labelsEl.hidden = true;
+  controls.enabled = false;
+  ring.visible = false;
+  const p = persp.position;
+  if (p.y < 3.2 && onFloor(p.x, p.z)) {
+    const dir = controls.target.clone().sub(p);
+    yaw = Math.atan2(-dir.x, -dir.z);
+    pitch = Math.max(-1.05, Math.min(1.05, Math.atan2(dir.y, Math.hypot(dir.x, dir.z))));
+    p.y = 1.62;
+  } else {
+    p.set(-0.5, 1.62, 5.7);
+    yaw = 0;
+    pitch = 0;
+  }
+  walking = true;
+  document.body.classList.add('walking');
+  buttons.forEach(b => b.setAttribute('aria-pressed', String(b.id === 'vwalk')));
+  $('hint').textContent = 'WASD để đi · click để xoay nhìn · Esc nhả chuột';
+  persp.fov = 72;
+  persp.updateProjectionMatrix();
+  applyPov();
+}
+function stopWalk() {
+  if (!walking) return;
+  walking = false;
+  keys.clear();
+  document.body.classList.remove('walking');
+  canvas.style.cursor = '';
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  applyPov();
+  persp.fov = innerWidth / innerHeight < 0.8 ? 62 : 45;
+  persp.updateProjectionMatrix();
+}
+function typingTarget(el) {
+  return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+}
+addEventListener('keydown', (e) => {
+  if (e.key === 'Shift') keys.add('shift');
+  if (typingTarget(e.target) || myIsland !== 0) return;
+  const k = e.key.toLowerCase();
+  if (k !== 'w' && k !== 'a' && k !== 's' && k !== 'd' && k !== 'arrowup' && k !== 'arrowdown' && k !== 'arrowleft' && k !== 'arrowright') return;
+  if (!walking) startWalk();
+  keys.add(k === 'arrowup' ? 'w' : k === 'arrowdown' ? 's' : k === 'arrowleft' ? 'a' : k === 'arrowright' ? 'd' : k);
+  e.preventDefault();
+});
+addEventListener('keyup', (e) => {
+  const k = e.key.toLowerCase();
+  keys.delete(k === 'arrowup' ? 'w' : k === 'arrowdown' ? 's' : k === 'arrowleft' ? 'a' : k === 'arrowright' ? 'd' : k);
+});
+addEventListener('blur', () => keys.clear());
+canvas.addEventListener('click', () => {
+  if (walking && document.pointerLockElement !== canvas) canvas.requestPointerLock();
+});
+addEventListener('mousemove', (e) => {
+  if (!walking || document.pointerLockElement !== canvas) return;
+  yaw -= e.movementX * 0.0022;
+  pitch = Math.max(-1.15, Math.min(1.15, pitch - e.movementY * 0.0022));
+});
+document.addEventListener('pointerlockchange', () => {
+  if (walking) $('hint').textContent = document.pointerLockElement === canvas
+    ? 'WASD để đi · Esc nhả chuột'
+    : 'WASD để đi · click để xoay nhìn · Esc nhả chuột';
+});
+function stepWalk(dt) {
+  let mx = 0, mz = 0;
+  const fwdX = -Math.sin(yaw), fwdZ = -Math.cos(yaw);
+  const rightX = Math.cos(yaw), rightZ = -Math.sin(yaw);
+  if (keys.has('w')) { mx += fwdX; mz += fwdZ; }
+  if (keys.has('s')) { mx -= fwdX; mz -= fwdZ; }
+  if (keys.has('d')) { mx += rightX; mz += rightZ; }
+  if (keys.has('a')) { mx -= rightX; mz -= rightZ; }
+  const len = Math.hypot(mx, mz);
+  if (len > 0) {
+    const speed = (keys.has('shift') ? 4.4 : 2.5) * dt;
+    mx = mx / len * speed; mz = mz / len * speed;
+    const x = persp.position.x, z = persp.position.z;
+    if (!blocked(x + mx, z)) persp.position.x = x + mx;
+    if (!blocked(persp.position.x, z + mz)) persp.position.z = z + mz;
+  }
+  persp.position.y = 1.62 + (len > 0 && !REDUCED ? Math.sin(T.value * 9) * 0.03 : 0);
+  applyPov();
+}
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
@@ -1905,7 +2041,8 @@ renderer.setAnimationLoop(() => {
       }
     }
   }
-  if (camera === persp && !tween) controls.update();
+  if (walking) stepWalk(dt);
+  else if (camera === persp && !tween) controls.update();
   else if (camera !== persp) {
     const w = innerWidth, h = innerHeight;
     for (const t of tags) {
