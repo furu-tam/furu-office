@@ -721,15 +721,15 @@ function registerSeat(deskGroup, prop) {
   deskGroup.add(picker);
   pickers.push(picker);
 }
-function addOpenSeat(x, z, yaw, parent) {
+function addOpenSeat(x, z, yaw, parent, y = 0, front = false) {
   const slot = islandCursor.seats.length;
-  islandCursor.seats.push({ x, z, yaw, prop: null });
+  islandCursor.seats.push({ x, z, yaw, y, front, prop: null });
   islandCursor.screens.push(faceDisc());
   const picker = new THREE.Mesh(
     new THREE.BoxGeometry(0.72, 1.2, 0.72),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
   );
-  picker.position.set(x, 0.75, z);
+  picker.position.set(x, 0.75 + y, z);
   picker.userData.island = islands.length - 1;
   picker.userData.slot = slot;
   parent.add(picker);
@@ -816,17 +816,23 @@ islands.forEach(tagIsland);
     cyl(0.025, 0.025, 0.72, mat.chrome, x, 0.38, -7.12, c, 8);
     cyl(0.2, 0.2, 0.02, mat.chrome, x, 0.01, -7.12, c, 16);
   }
-  // café tables
+  // café tables, each its own quiet seat group
   for (const [tx, tz] of [[-9.6, -4.3], [-7.2, -4.3], [-8.4, -2.5]]) {
     cyl(0.42, 0.42, 0.04, mat.terrazzo, tx, 0.74, tz, c, 24);
     cyl(0.03, 0.03, 0.72, mat.frame, tx, 0.37, tz, c, 8);
     cyl(0.22, 0.22, 0.02, mat.frame, tx, 0.01, tz, c, 16);
+    startIsland('Cà phê', 'bàn riêng · ngồi chơi');
+    islandCursor.quiet = true;
     for (let k = 0; k < 3; k++) {
       const a = k / 3 * Math.PI * 2 + 0.4, x = tx + Math.cos(a) * 0.7, z = tz + Math.sin(a) * 0.7, yaw = Math.atan2(tx - x, tz - z);
       const ch = new THREE.Group(); ch.position.set(x, 0, z); ch.rotation.y = yaw; c.add(ch);
       box(0.42, 0.04, 0.42, mat.walnut, 0, 0.45, 0, ch); box(0.42, 0.4, 0.04, mat.walnut, 0, 0.68, -0.2, ch);
       for (const sx of [-0.18, 0.18]) for (const sz of [-0.18, 0.18]) box(0.03, 0.45, 0.03, mat.frame, sx, 0.225, sz, ch);
+      addOpenSeat(x, z, yaw, c);
     }
+    const table = islandCursor;
+    islandCursor = null;
+    tagIsland(table, islands.indexOf(table));
   }
 }
 
@@ -863,6 +869,15 @@ function sofa(parent, x, z, len, yaw) {
   // floor lamp
   cyl(0.02, 0.02, 1.6, mat.frame, 10.8, 0.8, -3.9, l, 8);
   cyl(0.18, 0.22, 0.25, M(0xf3ead9, 0.7, { emissive: 0xffd9a0, emissiveIntensity: 0.4 }), 10.8, 1.65, -3.9, l, 16);
+  startIsland('Giải lao', 'ngồi chơi');
+  islandCursor.quiet = true;
+  for (const x of [6.6, 8.2, 9.8]) addOpenSeat(x, -3.55, Math.PI, l, -0.1, true);
+  for (const z of [-6.25, -4.95]) addOpenSeat(9.2, z, -Math.PI / 2, l, -0.1, true);
+  for (const [x, z] of [[6.1, -6.9], [7.6, -7.25], [9.3, -7.05]]) addOpenSeat(x, z, Math.atan2(8.4 - x, -5.5 - z), l, -0.12, true);
+  addOpenSeat(4.8, -4.5, 0, l, 0.08, true);
+  const lounge = islandCursor;
+  islandCursor = null;
+  tagIsland(lounge, islands.indexOf(lounge));
 }
 
 // ---------- nap room: frosted partition, 2 nap pods ----------
@@ -1138,13 +1153,14 @@ function setConn(state, text) {
 }
 function myCallId() { return myIsland ? 'furuoff-d' + myIsland + '-' + myId : ''; }
 function islandOf(n) { return islands[n - 1] || null; }
+function seatedQuiet() { return !!(islandOf(myIsland) && islandOf(myIsland).quiet); }
 function seatOf(table, slot) {
   const island = islandOf(table);
   return island && slot > 0 ? island.seats[slot - 1] : null;
 }
 function faceAnchor(seat, target) {
   const s = Math.sin(seat.yaw), c = Math.cos(seat.yaw);
-  target.set(seat.x + s * 0.2, 1.38, seat.z + c * 0.2);
+  target.set(seat.x + s * 0.2, 1.38 + (seat.y || 0), seat.z + c * 0.2);
 }
 function avatarTex(name) {
   const c = document.createElement('canvas');
@@ -1186,8 +1202,9 @@ function upsertSeat(info) {
   row.el.textContent = row.name + (mine ? ' · bạn' : '');
   if (prev) setProp(prev.table, prev.slot, true);
   setProp(row.table, row.slot, false);
-  if (!row.body) row.body = seated(G.people, seat.x, seat.z, seat.yaw);
-  else { row.body.position.set(seat.x, 0, seat.z); row.body.rotation.y = seat.yaw; }
+  const sitY = seat.y || 0;
+  if (!row.body) row.body = seated(G.people, seat.x, seat.z, seat.yaw, sitY);
+  else { row.body.position.set(seat.x, sitY, seat.z); row.body.rotation.y = seat.yaw; }
 }
 function removeSeat(id) {
   const row = people.get(id);
@@ -1235,7 +1252,7 @@ function placeOffice() {
   people.forEach((row) => {
     const seat = seatOf(row.table, row.slot);
     if (!seat) { row.el.hidden = true; return; }
-    _pt.set(seat.x, 1.75, seat.z).project(camera);
+    _pt.set(seat.x, 1.75 + (seat.y || 0), seat.z).project(camera);
     const disc = myIsland === row.table && row.id !== myId;
     row.el.hidden = _pt.z > 1 || disc;
     row.el.style.left = ((_pt.x + 1) / 2 * w) + 'px';
@@ -1273,8 +1290,14 @@ function sitCamera(seat) {
     look = tv;
   } else {
     const s = Math.sin(seat.yaw), c = Math.cos(seat.yaw);
-    eye = new THREE.Vector3(seat.x - s * 1.75, 1.62, seat.z - c * 1.75);
-    look = new THREE.Vector3(seat.x + s * 0.4, 1.02, seat.z + c * 0.4);
+    const back = island && island.quiet ? 1.25 : 1.75;
+    if (seat.front) {
+      eye = new THREE.Vector3(seat.x + s * 2.2, 1.4 + (seat.y || 0), seat.z + c * 2.2);
+      look = new THREE.Vector3(seat.x, 0.85 + (seat.y || 0), seat.z);
+    } else {
+      eye = new THREE.Vector3(seat.x - s * back, 1.55 + (seat.y || 0), seat.z - c * back);
+      look = new THREE.Vector3(seat.x + s * 0.4, 1.02 + (seat.y || 0), seat.z + c * 0.4);
+    }
   }
   controls.enabled = false;
   const tighten = () => {
@@ -1319,30 +1342,40 @@ function enterDesk(index, slot) {
   myIsland = index + 1;
   mySlot = slot;
   const island = islands[index];
-  document.body.classList.add('in-room');
+  const quiet = !!island.quiet;
+  document.body.classList.toggle('in-room', !quiet);
   applyChrome();
   $('dockView').hidden = true;
   $('dockRoom').hidden = false;
-  $('btnTalk').hidden = false;
+  $('btnTalk').hidden = quiet;
   $('btnHear').hidden = true;
+  $('btnMic').hidden = quiet;
+  $('btnCam').hidden = quiet;
+  $('btnChat').hidden = quiet;
+  $('btnLeave').textContent = quiet ? 'Rời chỗ' : 'Rời bàn';
   $('roomTitle').textContent = island.label + ' · ' + island.zone;
-  $('hint').textContent = island.share
-    ? 'Đang ở phòng họp · chỗ ' + slot + '/' + island.seats.length + ' · có thể chia sẻ màn hình'
-    : 'Đang ngồi ' + island.label + ' (' + island.zone + ') · chỗ ' + slot + '/' + island.seats.length;
-  $('btnShare').hidden = !island.share;
+  $('hint').textContent = quiet
+    ? 'Đang ngồi ' + island.label + ' · chỗ ' + slot + '/' + island.seats.length + ' · ngồi chơi'
+    : island.share
+      ? 'Đang ở phòng họp · chỗ ' + slot + '/' + island.seats.length + ' · có thể chia sẻ màn hình'
+      : 'Đang ngồi ' + island.label + ' (' + island.zone + ') · chỗ ' + slot + '/' + island.seats.length;
+  $('btnShare').hidden = quiet || !island.share;
   $('btnTv').hidden = true;
-  $('chatMsgs').innerHTML = '';
-  sysMsg(island.share
-    ? 'Bạn đã vào phòng họp, chỗ ' + slot + '. Bấm Bật tiếng để nói, hoặc Chia sẻ màn hình để chiếu lên TV.'
-    : 'Bạn đã ngồi ' + island.label + ', chỗ ' + slot + '. Bấm Bật tiếng để nói với cả đảo.');
-  toast(island.share ? 'Đã vào phòng họp.' : 'Đã ngồi. Bấm Bật tiếng khi muốn nói.', 3200);
+  if (!quiet) {
+    $('chatMsgs').innerHTML = '';
+    sysMsg(island.share
+      ? 'Bạn đã vào phòng họp, chỗ ' + slot + '. Bấm Bật tiếng để nói, hoặc Chia sẻ màn hình để chiếu lên TV.'
+      : 'Bạn đã ngồi ' + island.label + ', chỗ ' + slot + '. Bấm Bật tiếng để nói với cả đảo.');
+  }
+  toast(quiet ? 'Đã ngồi chơi. Mic, camera và chat đang tắt.' : island.share ? 'Đã vào phòng họp.' : 'Đã ngồi. Bấm Bật tiếng khi muốn nói.', 3200);
   updateSelf();
   syncControlButtons();
   refreshScreens();
   ring.visible = false;
   announceSeat();
   sitCamera(island.seats[slot - 1]);
-  openTablePeer();
+  if (quiet) setConn('on', 'Chỗ ngồi chơi, không bật mic hay chat');
+  else openTablePeer();
 }
 function leaveDesk(silent) {
   if (myIsland === 0) return;
@@ -1369,6 +1402,10 @@ function leaveDesk(silent) {
   $('dockRoom').hidden = true;
   $('btnShare').hidden = true;
   $('btnTv').hidden = true;
+  $('btnMic').hidden = false;
+  $('btnCam').hidden = false;
+  $('btnChat').hidden = false;
+  $('btnLeave').textContent = 'Rời bàn';
   closeTvFull();
   $('btnTalk').hidden = false;
   $('btnHear').hidden = true;
@@ -1499,7 +1536,7 @@ function playRemoteAudio(stream) {
 }
 function startVoice() {
   unlockAudio();
-  if (myIsland === 0) return;
+  if (myIsland === 0 || seatedQuiet()) return;
   if (localStream && localStream.getAudioTracks().some((t) => t.readyState === 'live')) {
     micOn = true;
     localStream.getAudioTracks().forEach((t) => { t.enabled = true; });
@@ -2236,7 +2273,8 @@ let preferChat = innerWidth > 980;
 try { menuOpen = localStorage.getItem('furu-office-menu') !== '0'; } catch (e) {}
 function applyChrome() {
   document.body.classList.toggle('menu-hidden', !menuOpen);
-  document.body.classList.toggle('chat-open', myIsland !== 0 && preferChat);
+  document.body.classList.toggle('chat-open', myIsland !== 0 && preferChat && !seatedQuiet());
+  $('btnChatToggle').hidden = seatedQuiet();
   $('btnMenu').textContent = menuOpen ? 'Ẩn menu' : 'Hiện menu';
   $('btnMenu').setAttribute('aria-pressed', String(menuOpen));
   const chatOn = document.body.classList.contains('chat-open');
@@ -2251,6 +2289,7 @@ function toggleMenu() {
 }
 function toggleChat() {
   if (myIsland === 0) { toast('Ngồi vào một bàn để mở chat.'); return; }
+  if (seatedQuiet()) { toast('Chỗ này chỉ để ngồi chơi.'); return; }
   preferChat = !document.body.classList.contains('chat-open');
   if (preferChat) clearChatNote();
   applyChrome();
