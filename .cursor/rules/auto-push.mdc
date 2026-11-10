@@ -1,0 +1,14 @@
+---
+description: Commit and push finished work on this project without waiting to be asked
+alwaysApply: true
+---
+
+# Auto push
+
+When a requested change is finished and the worktree has those edits, commit and push to `origin` on the current branch. Do not wait for a separate "push" message.
+
+- Stage only files that belong to the change. Leave secrets (`.env`, credentials, keys) unstaged and say so.
+- Commit message: one or two sentences on why, matching recent history.
+- Push with `git push` to the tracked upstream. If there is no upstream, push with `-u` to `origin` and the current branch name.
+- If the commit or push fails, fix a hook problem with a new commit when the change is still wanted, then push again. Do not use `--no-verify`, `--force`, or `commit --amend` unless the user asks.
+- Skip when the user said not to commit or push, when there is nothing to commit, or when the branch is not one they are already using.
