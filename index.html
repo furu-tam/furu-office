@@ -134,6 +134,16 @@
     .dock button { flex: none; }
   }
   #err { position: fixed; inset: auto 16px 50% 16px; text-align: center; }
+  #tvFull {
+    position: fixed; inset: 0; z-index: 40; background: #041018;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #tvFull video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #tvFull button {
+    position: absolute; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right));
+    font: 700 14px var(--f-body); color: var(--ink); background: var(--plate);
+    border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; cursor: pointer;
+  }
 </style>
 
 <canvas id="stage" aria-label="Văn phòng furuCRM. Bấm một đảo bàn làm việc để ngồi, rồi bật tiếng và camera với người cùng đảo."></canvas>
@@ -172,8 +182,13 @@
   <button type="button" id="btnMic">Mic đang tắt</button>
   <button type="button" id="btnCam">Camera đang tắt</button>
   <button type="button" id="btnShare" hidden>Chia sẻ màn hình</button>
+  <button type="button" id="btnTv" hidden>Xem full</button>
   <button type="button" id="btnChat">Chat</button>
   <button type="button" class="leave" id="btnLeave">Rời bàn</button>
+</div>
+<div id="tvFull" hidden>
+  <video id="tvFullVideo" autoplay playsinline></video>
+  <button type="button" id="tvFullClose">Đóng</button>
 </div>
 <div id="toast" role="status"></div>
 <p id="err" hidden>Trình duyệt này không chạy được WebGL.</p>
@@ -584,6 +599,7 @@ const boat = new THREE.Group();
 const islands = [];
 const pickers = [];
 let meetingTvMat = null;
+let meetingTvMesh = null;
 let islandCursor = null;
 const facesEl = document.getElementById('faces');
 const deskTagsEl = document.getElementById('deskTags');
@@ -822,7 +838,7 @@ function sofa(parent, x, z, len, yaw) {
   tagIsland(meeting, islands.indexOf(meeting));
   box(1.7, 1.0, 0.05, mat.monitor, 10.5, 1.5, 7.88, m);
   meetingTvMat = mat.tv.clone();
-  plane(1.62, 0.92, meetingTvMat, 10.5, 1.5, 7.85, Math.PI, m);
+  meetingTvMesh = plane(1.62, 0.92, meetingTvMat, 10.5, 1.5, 7.85, Math.PI, m);
 }
 
 // ---------- phone booths ----------
@@ -1203,6 +1219,7 @@ function enterDesk(index, slot) {
     ? 'Đang ở phòng họp · chỗ ' + slot + '/' + island.seats.length + ' · có thể chia sẻ màn hình'
     : 'Đang ngồi ' + island.label + ' (' + island.zone + ') · chỗ ' + slot + '/' + island.seats.length;
   $('btnShare').hidden = !island.share;
+  $('btnTv').hidden = true;
   $('chatMsgs').innerHTML = '';
   sysMsg(island.share
     ? 'Bạn đã vào phòng họp, chỗ ' + slot + '. Bấm Bật tiếng để nói, hoặc Chia sẻ màn hình để chiếu lên TV.'
@@ -1239,6 +1256,8 @@ function leaveDesk(silent) {
   $('dockView').hidden = false;
   $('dockRoom').hidden = true;
   $('btnShare').hidden = true;
+  $('btnTv').hidden = true;
+  closeTvFull();
   $('btnTalk').hidden = false;
   $('btnHear').hidden = true;
   setConn('on', 'Ngồi cùng đảo là nói chuyện được với đồng nghiệp');
@@ -1455,13 +1474,47 @@ function showMeetingScreen(stream, name) {
   meetingTvMat.needsUpdate = true;
   screenVideo = video;
   screenTex = tex;
+  if (inMeeting()) {
+    $('btnTv').hidden = false;
+    $('hint').textContent = 'Bấm TV hoặc Xem full để phóng màn hình chia sẻ';
+  }
   if (name && name !== myName()) toast(name + ' đang chia sẻ màn hình.', 2800);
+}
+function openTvFull() {
+  const stream = screenVideo && screenVideo.srcObject;
+  if (!stream) { toast('Chưa có màn hình để phóng to.'); return; }
+  const el = $('tvFull');
+  const vid = $('tvFullVideo');
+  if (vid.srcObject !== stream) vid.srcObject = stream;
+  vid.muted = true;
+  vid.playsInline = true;
+  vid.play().catch(() => {});
+  el.hidden = false;
+  const ask = el.requestFullscreen ? el.requestFullscreen() : null;
+  if (ask && ask.catch) ask.catch(() => {});
+}
+function closeTvFull() {
+  const el = $('tvFull');
+  if (!el) return;
+  if (document.fullscreenElement === el) {
+    const done = document.exitFullscreen();
+    if (done && done.catch) done.catch(() => {});
+  }
+  el.hidden = true;
 }
 function clearMeetingScreen() {
   if (screenVideo) { try { screenVideo.pause(); screenVideo.srcObject = null; } catch (e) {} screenVideo = null; }
   if (screenTex) { screenTex.dispose(); screenTex = null; }
   screenCall = null;
   if (meetingTvMat) { meetingTvMat.map = burndownTex; meetingTvMat.needsUpdate = true; }
+  closeTvFull();
+  const fullVid = $('tvFullVideo');
+  if (fullVid) fullVid.srcObject = null;
+  if ($('btnTv')) $('btnTv').hidden = true;
+  if (inMeeting()) {
+    const island = islandOf(myIsland);
+    $('hint').textContent = 'Đang ở phòng họp · chỗ ' + mySlot + '/' + island.seats.length + ' · có thể chia sẻ màn hình';
+  }
 }
 function offerScreen(pid) {
   if (!myPeer || !screenStream || !pid || pid === myPeer.id) return;
@@ -1919,17 +1972,31 @@ const pointer = new THREE.Vector2();
 let down = null;
 canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
 canvas.addEventListener('pointerup', (e) => {
-  if (!down || myIsland !== 0) { down = null; return; }
+  if (!down) return;
   const dx = e.clientX - down.x, dy = e.clientY - down.y;
   down = null;
   if (dx * dx + dy * dy > 36) return;
   pointer.x = (e.clientX / innerWidth) * 2 - 1;
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  if (inMeeting() && meetingTvMesh && screenVideo && screenVideo.srcObject) {
+    const tvHit = raycaster.intersectObject(meetingTvMesh, false)[0];
+    if (tvHit) { openTvFull(); return; }
+  }
+  if (myIsland !== 0) return;
   const hit = raycaster.intersectObjects(pickers, false)[0];
   if (hit) joinDesk(hit.object.userData.island, hit.object.userData.slot);
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (inMeeting() && meetingTvMesh && screenVideo && screenVideo.srcObject) {
+    pointer.x = (e.clientX / innerWidth) * 2 - 1;
+    pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+    const tvHit = raycaster.intersectObject(meetingTvMesh, false)[0];
+    canvas.style.cursor = tvHit ? 'zoom-in' : '';
+    hoveredIsland = -1; ring.visible = false;
+    return;
+  }
   if (myIsland !== 0) { hoveredIsland = -1; ring.visible = false; canvas.style.cursor = ''; return; }
   pointer.x = (e.clientX / innerWidth) * 2 - 1;
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
@@ -1965,6 +2032,10 @@ $('btnMic').addEventListener('click', () => {
   broadcast({ kind: 'state', mic: micOn, cam: camOn });
 });
 $('btnShare').addEventListener('click', () => { if (sharing) stopShare(); else startShare(); });
+$('btnTv').addEventListener('click', openTvFull);
+$('tvFullClose').addEventListener('click', closeTvFull);
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) $('tvFull').hidden = true; });
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('tvFull').hidden) closeTvFull(); });
 $('btnCam').addEventListener('click', () => {
   if (camOn) {
     camOn = false;
