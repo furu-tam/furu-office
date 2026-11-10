@@ -144,6 +144,34 @@
     font: 700 14px var(--f-body); color: var(--ink); background: var(--plate);
     border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; cursor: pointer;
   }
+  #secureRoom {
+    position: fixed; inset: 0; z-index: 25; display: flex; flex-direction: column;
+    background: #071820;
+  }
+  #secureRoom[hidden], #secureFrame[hidden], #secureBlocked[hidden] { display: none !important; }
+  #secureRoom header {
+    display: flex; align-items: center; gap: 12px; flex: none;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--plate);
+  }
+  #secureRoom header b { font-size: 16px; }
+  #secureRoom header span { color: var(--ink-dim); font: 600 13px var(--f-body); }
+  #secureRoom header .spacer { flex: 1; }
+  #secureRoom header button, #secureRoom header a {
+    font: 700 13px var(--f-body); color: var(--ink); background: transparent;
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; cursor: pointer;
+    text-decoration: none;
+  }
+  #secureRoom header button { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  #secureFrame { flex: 1; width: 100%; border: 0; background: #fff; }
+  #secureBlocked {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; padding: 28px; text-align: center;
+  }
+  #secureBlocked p { margin: 0; max-width: 460px; line-height: 1.5; color: var(--ink-dim); }
+  #secureBlocked a {
+    font: 800 14px var(--f-body); color: var(--bg); background: var(--accent);
+    border-radius: 999px; padding: 10px 16px; text-decoration: none;
+  }
 </style>
 
 <canvas id="stage" aria-label="Văn phòng furuCRM. Bấm một đảo bàn làm việc để ngồi, rồi bật tiếng và camera với người cùng đảo."></canvas>
@@ -189,6 +217,20 @@
 <div id="tvFull" hidden>
   <video id="tvFullVideo" autoplay playsinline></video>
   <button type="button" id="tvFullClose">Đóng</button>
+</div>
+<div id="secureRoom" hidden>
+  <header>
+    <b>Security</b>
+    <span>Tra cứu · Esc hoặc Thoát để về văn phòng</span>
+    <span class="spacer"></span>
+    <a id="secureOpen" href="https://furu-agentforce.my.site.com/pwas/s/login/?ec=302&amp;startURL=%2Fpwas%2Fs%2F" target="_blank" rel="noopener">Mở tab mới</a>
+    <button type="button" id="secureExit">Thoát</button>
+  </header>
+  <iframe id="secureFrame" title="Security tra cứu" hidden></iframe>
+  <div id="secureBlocked" hidden>
+    <p>Trang tra cứu không cho phép nhúng vào văn phòng. Mở tab mới để đăng nhập và tra cứu, rồi bấm Thoát để về phòng.</p>
+    <a href="https://furu-agentforce.my.site.com/pwas/s/login/?ec=302&amp;startURL=%2Fpwas%2Fs%2F" target="_blank" rel="noopener">Mở trang tra cứu</a>
+  </div>
 </div>
 <div id="toast" role="status"></div>
 <p id="err" hidden>Trình duyệt này không chạy được WebGL.</p>
@@ -429,7 +471,7 @@ const HAIR = [0x1d1612, 0x3a2a1e, 0x14100d].map(c => M(c, 0.9));
 const PANTS = [0x2b3a42, 0x3a4c5e, 0x5a4a3c].map(c => M(c, 0.9));
 
 // ---------- helpers ----------
-const G = Object.fromEntries(['exterior', 'shell', 'workspace', 'sea_desks', 'cafe', 'lounge', 'nap_room', 'meeting', 'booths', 'server', 'reception', 'balcony', 'plants', 'people'].map(n => {
+const G = Object.fromEntries(['exterior', 'shell', 'workspace', 'sea_desks', 'cafe', 'lounge', 'nap_room', 'meeting', 'security', 'booths', 'server', 'reception', 'balcony', 'plants', 'people'].map(n => {
   const g = new THREE.Group(); g.name = n; scene.add(g); return [n, g];
 }));
 function box(w, h, d, m, x, y, z, parent, shadow = true) {
@@ -600,6 +642,11 @@ const islands = [];
 const pickers = [];
 let meetingTvMat = null;
 let meetingTvMesh = null;
+let securityTag = null;
+let inSecurity = false;
+let securityPose = null;
+let securityBlocked = false;
+const SECURITY_URL = 'https://furu-agentforce.my.site.com/pwas/s/login/?ec=302&startURL=%2Fpwas%2Fs%2F';
 let islandCursor = null;
 const facesEl = document.getElementById('faces');
 const deskTagsEl = document.getElementById('deskTags');
@@ -775,9 +822,9 @@ function sofa(parent, x, z, len, yaw) {
 }
 {
   const l = G.lounge;
-  const rug = new THREE.Mesh(new THREE.PlaneGeometry(7, 4.2), mat.rug); rug.rotation.x = -Math.PI / 2; rug.position.set(8.4, 0.012, -5.5); rug.receiveShadow = true; l.add(rug);
+  const rug = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 4.2), mat.rug); rug.rotation.x = -Math.PI / 2; rug.position.set(7.5, 0.012, -5.5); rug.receiveShadow = true; l.add(rug);
   sofa(l, 8.2, -3.4, 5.0, Math.PI);
-  sofa(l, 11.9, -5.6, 3.2, -Math.PI / 2);
+  sofa(l, 9.15, -5.6, 3.2, -Math.PI / 2);
   box(1.6, 0.05, 0.8, mat.walnut, 8.4, 0.38, -5.5, l);
   for (const sx of [-0.7, 0.7]) box(0.05, 0.36, 0.7, mat.frame, 8.4 + sx, 0.18, -5.5, l);
   cyl(0.04, 0.035, 0.1, mat.white, 8.1, 0.45, -5.4, l, 12);
@@ -902,7 +949,44 @@ const rackMats = [];
 }
 
 // ---------- plants inside ----------
-for (const [x, z, s] of [[-4.8, -7.5, 1.1], [4.4, -7.5, 1.1], [12.5, -7.6, 1.2], [-7.4, 2, 1], [6.8, 2, 1], [0, 7.4, 0.9], [-0.3, 2, 0.8], [8.5, 2.4, 0.9], [-12.4, -0.9, 0.8]]) plant(x, z, s);
+for (const [x, z, s] of [[-4.8, -7.5, 1.1], [4.4, -7.5, 1.1], [9.7, -7.75, 0.85], [-7.4, 2, 1], [6.8, 2, 1], [0, 7.4, 0.9], [-0.3, 2, 0.8], [8.5, 2.4, 0.9], [-12.4, -0.9, 0.8]]) plant(x, z, s);
+
+// ---------- security room: right sea corner ----------
+{
+  const sec = G.security;
+  glassWall(10.7, -7.95, 10.7, -6.4, 2.6, sec, mat.glass, 1.15);
+  glassWall(10.7, -5.2, 10.7, -4.55, 2.6, sec, mat.glass, 1.15);
+  glassWall(10.7, -4.55, 13, -4.55, 2.6, sec, mat.glass, 1.3);
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.3), M(0x16343c, 0.9));
+  pad.rotation.x = -Math.PI / 2; pad.position.set(11.85, 0.012, -6.25); pad.receiveShadow = true; sec.add(pad);
+  box(1.45, 0.04, 0.7, mat.deskTop, 12.35, 0.74, -6.85, sec);
+  for (const sx of [-0.66, 0.66]) box(0.04, 0.72, 0.6, mat.deskLeg, 12.35 + sx, 0.36, -6.85, sec);
+  box(1.15, 0.62, 0.04, mat.monitor, 12.35, 1.25, -7.12, sec);
+  const secTex = canvasTex(512, 256, (g, w, h) => {
+    g.fillStyle = '#102028'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#3fd0c0'; g.font = '700 54px sans-serif'; g.textAlign = 'center';
+    g.fillText('SECURITY', w / 2, 108);
+    g.fillStyle = '#d5e4e8'; g.font = '400 28px sans-serif'; g.fillText('tra cứu', w / 2, 164);
+  }, 'security_sign');
+  plane(1.05, 0.52, new THREE.MeshBasicMaterial({ map: secTex }), 12.35, 1.25, -7.09, 0, sec);
+  officeChair(sec, 12.35, -6.15, Math.PI);
+  const picker = new THREE.Mesh(
+    new THREE.BoxGeometry(2.15, 1.7, 3.2),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
+  );
+  picker.position.set(11.85, 1.05, -6.25);
+  picker.userData.security = true;
+  sec.add(picker);
+  pickers.push(picker);
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'dtag';
+  el.innerHTML = '<b>Security</b>tra cứu';
+  el.title = 'Mở trang tra cứu';
+  el.addEventListener('click', (e) => { e.stopPropagation(); enterSecurity(); });
+  deskTagsEl.appendChild(el);
+  securityTag = { el, v: new THREE.Vector3(11.85, 1.85, -6.25) };
+}
 
 // ---------- zone labels (plan view) ----------
 const ZONES = [
@@ -917,6 +1001,7 @@ const ZONES = [
   ['Phòng server', '4 rack', [-11.2, 1, 6.1]],
   ['Lễ tân', 'lối vào', [-2.2, 1, 6.6]],
   ['Ban công', 'ghế nằm · bàn cà phê', [2, 1, -9.4], 'warm'],
+  ['Security', 'tra cứu', [11.85, 1, -6.25]],
 ];
 const labelsEl = document.getElementById('labels');
 const tags = ZONES.map(([n, s, p, cls]) => {
@@ -1110,9 +1195,15 @@ function announceSeat() {
 }
 function placeOffice() {
   const w = innerWidth, h = innerHeight;
-  const showTags = myIsland === 0;
+  const showTags = myIsland === 0 && !inSecurity;
   deskTagsEl.hidden = !showTags;
   if (showTags) {
+    if (securityTag) {
+      _pt.copy(securityTag.v).project(camera);
+      securityTag.el.hidden = _pt.z > 1;
+      securityTag.el.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+      securityTag.el.style.top = ((1 - _pt.y) / 2 * h) + 'px';
+    }
     islands.forEach((island, i) => {
       _pt.copy(island.center).project(camera);
       island.tag.hidden = _pt.z > 1;
@@ -1983,8 +2074,9 @@ canvas.addEventListener('pointerup', (e) => {
     const tvHit = raycaster.intersectObject(meetingTvMesh, false)[0];
     if (tvHit) { openTvFull(); return; }
   }
-  if (myIsland !== 0) return;
+  if (myIsland !== 0 || inSecurity) return;
   const hit = raycaster.intersectObjects(pickers, false)[0];
+  if (hit && hit.object.userData.security) { enterSecurity(); return; }
   if (hit) joinDesk(hit.object.userData.island, hit.object.userData.slot);
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -1997,11 +2089,14 @@ canvas.addEventListener('pointermove', (e) => {
     hoveredIsland = -1; ring.visible = false;
     return;
   }
-  if (myIsland !== 0) { hoveredIsland = -1; ring.visible = false; canvas.style.cursor = ''; return; }
+  if (myIsland !== 0 || inSecurity) { hoveredIsland = -1; ring.visible = false; canvas.style.cursor = ''; return; }
   pointer.x = (e.clientX / innerWidth) * 2 - 1;
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hit = raycaster.intersectObjects(pickers, false)[0];
+  if (hit && hit.object.userData.security) {
+    hoveredIsland = -1; ring.visible = false; canvas.style.cursor = 'pointer'; return;
+  }
   hoveredIsland = hit ? hit.object.userData.island : -1;
   canvas.style.cursor = hit ? 'pointer' : '';
   if (hit) {
@@ -2035,7 +2130,64 @@ $('btnShare').addEventListener('click', () => { if (sharing) stopShare(); else s
 $('btnTv').addEventListener('click', openTvFull);
 $('tvFullClose').addEventListener('click', closeTvFull);
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) $('tvFull').hidden = true; });
-addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('tvFull').hidden) closeTvFull(); });
+addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (inSecurity) { leaveSecurity(); return; }
+  if (!$('tvFull').hidden) closeTvFull();
+});
+function enterSecurity() {
+  if (inSecurity) return;
+  if (myIsland !== 0) { toast('Rời bàn trước khi vào Security.'); return; }
+  inSecurity = true;
+  controls.enabled = false;
+  camera = persp;
+  labelsEl.hidden = true;
+  ring.visible = false;
+  securityPose = { p: persp.position.clone(), t: controls.target.clone() };
+  const eye = new THREE.Vector3(9.05, 1.62, -6.45);
+  const look = new THREE.Vector3(12.35, 1.15, -6.7);
+  if (REDUCED) { persp.position.copy(eye); controls.target.copy(look); tween = null; }
+  else tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1: eye, t1: look, s: 0 };
+  const frame = $('secureFrame');
+  if (frame.src) {
+    frame.hidden = securityBlocked;
+    $('secureBlocked').hidden = !securityBlocked;
+  } else {
+    securityBlocked = false;
+    $('secureBlocked').hidden = true;
+    frame.hidden = false;
+    frame.src = SECURITY_URL;
+  }
+  $('secureRoom').hidden = false;
+  $('hint').textContent = 'Security · Esc hoặc Thoát để rời phòng';
+  $('secureExit').focus();
+}
+function leaveSecurity() {
+  if (!inSecurity) return;
+  inSecurity = false;
+  $('secureRoom').hidden = true;
+  const pose = securityPose;
+  securityPose = null;
+  $('hint').textContent = 'Bấm một bàn để ngồi · kéo để xoay';
+  labelsEl.hidden = true;
+  controls.enabled = true;
+  if (!pose) return;
+  if (REDUCED) { persp.position.copy(pose.p); controls.target.copy(pose.t); tween = null; return; }
+  tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1: pose.p, t1: pose.t, s: 0 };
+}
+$('secureExit').addEventListener('click', leaveSecurity);
+$('secureFrame').addEventListener('load', () => {
+  const frame = $('secureFrame');
+  let blocked = false;
+  try {
+    const doc = frame.contentDocument;
+    blocked = !doc || !doc.location || doc.location.href === 'about:blank';
+  } catch (e) { blocked = false; }
+  securityBlocked = blocked;
+  frame.hidden = blocked;
+  $('secureBlocked').hidden = !blocked || $('secureRoom').hidden;
+  if (blocked && !$('secureRoom').hidden) $('secureExit').focus();
+});
 $('btnCam').addEventListener('click', () => {
   if (camOn) {
     camOn = false;
