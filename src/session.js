@@ -419,6 +419,72 @@ function takenSlots(index) {
   });
   return used;
 }
+function inviteSlug(island) {
+  if (!island) return '';
+  const zone = /^Zone (\d+)$/.exec(island.label);
+  if (zone) return 'zone-' + zone[1];
+  if (island.share) return 'hop';
+  return '';
+}
+function inviteAbs(slug) {
+  const url = new URL(location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('vao', slug);
+  return url.toString();
+}
+function setInviteParam(slug) {
+  const url = new URL(location.href);
+  url.search = '';
+  url.hash = '';
+  if (slug) url.searchParams.set('vao', slug);
+  history.replaceState(null, '', url);
+}
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMsg);
+  } catch (e) {
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.setAttribute('readonly', '');
+    input.style.position = 'fixed';
+    input.style.left = '-999px';
+    document.body.appendChild(input);
+    input.select();
+    try { document.execCommand('copy'); toast(okMsg); }
+    catch (err) { toast(text, 6000); }
+    input.remove();
+  }
+}
+function copyInvite(slug, label) {
+  copyText(inviteAbs(slug), 'Đã chép link mời ' + label + '. Gửi link để người khác vào cùng chỗ.');
+}
+let inviteTaken = false;
+function takeInvite() {
+  if (inviteTaken || !$('maker').hidden || myIsland !== 0) return;
+  const slug = new URL(location.href).searchParams.get('vao');
+  if (!slug) return;
+  const index = islands.findIndex((island) => inviteSlug(island) === slug);
+  if (index < 0) return;
+  inviteTaken = true;
+  joinDesk(index, -1);
+}
+islands.forEach((island) => {
+  const slug = inviteSlug(island);
+  if (!slug || !island.tag) return;
+  const link = document.createElement('a');
+  link.className = 'invite';
+  link.href = inviteAbs(slug);
+  link.textContent = 'Mời';
+  link.title = 'Link mời vào ' + island.label;
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    copyInvite(slug, island.label);
+  });
+  island.tag.appendChild(link);
+});
 function joinDesk(index, prefer) {
   if (myIsland !== 0) return;
   if (index < 0 || index >= islands.length) return;
@@ -458,10 +524,13 @@ function enterDesk(index, slot) {
   $('btnCoffee').hidden = !quiet;
   $('btnCoffee').disabled = false;
   $('btnCoffee').textContent = 'Gọi cà phê';
+  const slug = inviteSlug(island);
+  $('btnInvite').hidden = !slug;
+  if (slug) setInviteParam(slug);
   $('hint').textContent = quiet
     ? 'Đang ngồi ' + island.label + ' · chỗ ' + slot + '/' + island.seats.length + ' · bấm Gọi cà phê'
-    : island.share
-      ? 'Đang ở phòng họp · chỗ ' + slot + '/' + island.seats.length + ' · có thể chia sẻ màn hình'
+    : slug
+      ? 'Đang ở ' + island.label + ' · chỗ ' + slot + '/' + island.seats.length + ' · bấm Mời để gửi link'
       : 'Đang ngồi ' + island.label + ' (' + island.zone + ') · chỗ ' + slot + '/' + island.seats.length;
   $('btnShare').hidden = quiet || !island.share;
   $('btnTv').hidden = true;
@@ -521,6 +590,8 @@ function leaveDesk(silent) {
   $('btnCoffee').hidden = true;
   $('btnCoffee').disabled = false;
   $('btnCoffee').textContent = 'Gọi cà phê';
+  $('btnInvite').hidden = true;
+  setInviteParam('');
   cancelMyCoffee();
   setConn('on', 'Ngồi cùng đảo là nói chuyện được với đồng nghiệp');
   refreshScreens();
@@ -1744,6 +1815,11 @@ $('btnCam').addEventListener('click', () => {
 });
 $('btnLeave').addEventListener('click', () => leaveDesk(false));
 $('btnCoffee').addEventListener('click', orderCoffee);
+$('btnInvite').addEventListener('click', () => {
+  const island = islandOf(myIsland);
+  const slug = inviteSlug(island);
+  if (slug) copyInvite(slug, island.label);
+});
 $('btnFish').addEventListener('click', enterFish);
 let menuOpen = true;
 let preferChat = innerWidth > 980;
@@ -1891,6 +1967,7 @@ try {
     showMaker('Vào văn phòng');
   }
 } catch (e) { showMaker('Vào văn phòng'); }
+takeInvite();
 $('lookName').addEventListener('input', () => { if (lookPreview) lookPreview.setName($('lookName').value.trim()); });
 $('camFull').addEventListener('click', () => lookPreview && lookPreview.focus('full'));
 $('camFace').addEventListener('click', () => lookPreview && lookPreview.focus('face'));
@@ -1913,6 +1990,7 @@ $('lookForm').addEventListener('submit', (e) => {
   if (lookPreview) lookPreview.stop();
   updateSelf();
   if (myIsland > 0) announceSeat();
+  takeInvite();
 });
 $('btnLook').addEventListener('click', () => showMaker('Xong'));
 $('nameInput').addEventListener('change', () => {

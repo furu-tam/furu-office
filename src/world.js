@@ -552,12 +552,15 @@ function tagIsland(island, i) {
   let sx = 0, sz = 0;
   island.seats.forEach((s) => { sx += s.x; sz += s.z; });
   island.center = new THREE.Vector3(sx / island.seats.length, 1.85, sz / island.seats.length);
-  const el = document.createElement('button');
-  el.type = 'button';
-  el.className = 'dtag';
-  el.innerHTML = '<b>' + island.label + '</b>' + island.seats.length + ' chỗ';
-  el.title = island.zone;
-  el.addEventListener('click', (e) => { e.stopPropagation(); hooks.joinDesk(i, -1); });
+  const el = document.createElement('div');
+  el.className = 'dtag place';
+  const sit = document.createElement('button');
+  sit.type = 'button';
+  sit.className = 'sit';
+  sit.innerHTML = '<b>' + island.label + '</b>' + island.seats.length + ' chỗ';
+  sit.title = island.zone;
+  sit.addEventListener('click', (e) => { e.stopPropagation(); hooks.joinDesk(i, -1); });
+  el.appendChild(sit);
   deskTagsEl.appendChild(el);
   island.tag = el;
 }

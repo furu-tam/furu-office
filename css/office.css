@@ -64,6 +64,22 @@
   .dtag b { color: var(--accent); margin-right: 6px; }
   .dtag.hot, .dtag.mine { background: var(--accent); color: var(--bg); border-color: var(--accent); }
   .dtag.hot b, .dtag.mine b { color: var(--bg); }
+  .dtag.place {
+    display: flex; align-items: center; gap: 4px;
+    background: transparent; border: 0; padding: 0; backdrop-filter: none; pointer-events: none;
+  }
+  .dtag.place .sit {
+    pointer-events: auto; cursor: pointer; font: inherit; color: var(--ink);
+    background: var(--plate); border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px;
+    backdrop-filter: blur(8px);
+  }
+  .dtag.place.hot .sit { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .dtag.place.hot .sit b { color: var(--bg); }
+  .dtag a.invite {
+    pointer-events: auto; text-decoration: none;
+    font: 800 11px var(--f-body); color: var(--bg); background: var(--accent);
+    border-radius: 999px; padding: 4px 8px;
+  }
   .who, .facename { pointer-events: none; padding: 3px 8px; font-size: 12px; }
   .who .tap, .facename .tap {
     pointer-events: auto; margin-left: 6px; border: 0; cursor: pointer;
@@ -87,6 +103,7 @@
   .dock button.talk { background: #164e56; border-color: var(--accent); }
   .dock button.coffee { background: #6b3a22; border-color: #e0a070; color: #ffe7c8; }
   .dock button.coffee:disabled { opacity: 0.6; cursor: default; }
+  .dock button.invite { background: var(--accent); color: var(--bg); border-color: var(--accent); }
   .dock button.off { background: #8a3b32; border-color: #e07060; }
   .mic {
     display: inline-flex; align-items: flex-end; gap: 1.5px; height: 13px;
