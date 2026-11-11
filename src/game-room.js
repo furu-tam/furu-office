@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildCharacter, clampLook, disposeAvatar, lookSig, randomLook, tickAvatar } from './avatar.js';
-import { bootWolf } from './wolf-game.js?v=4';
+import { bootWolf } from './wolf-game.js?v=5';
 
 const $ = (id) => document.getElementById(id);
 const SEATS = 20;

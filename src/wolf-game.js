@@ -196,6 +196,7 @@ export function bootWolf(onChange) {
     $("meCard").style.display="block"; $("meSeat").textContent="Ghế "+(idx+1)+" — "+name;
     log("🪑 <b>"+esc(name)+"</b> đã ngồi vào <b>ghế "+(idx+1)+"</b>. Cả làng chào bạn!","sys");
     render();
+    syncVoice();
   }
   function joinFirstEmpty(){
     if (net.mode==="guest"){
@@ -232,6 +233,7 @@ export function bootWolf(onChange) {
     log("🚪 Bạn đã rời ghế "+(mySeat+1)+".","sys"); mySeat=-1;
     $("meCard").style.display="none"; $("roleReveal").classList.remove("show");
     render();
+    syncVoice();
   }
 
   /* ---------- Role dealing ---------- */
@@ -637,6 +639,7 @@ export function bootWolf(onChange) {
     this.textContent = gmOn ? "Giọng quản trò" : "Bật giọng";
     if (!gmOn && window.speechSynthesis) speechSynthesis.cancel();
   });
+  $("btnMic").addEventListener("click", toggleMic);
   if (window.speechSynthesis) speechSynthesis.getVoices();
   $("copyBtn").addEventListener("click", function(){
     var url=new URL(location.href); url.hash="";
@@ -690,6 +693,139 @@ export function bootWolf(onChange) {
   function broadcastState(){ if (net.mode==="host") netSendAll({type:"snapshot", state:snapshotState()}); }
   function setNetStatus(html){ $("netStatus").innerHTML = html; }
   var peerOpts = { config: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }], sdpSemantics: "unified-plan" }, secure: true };
+  var micOn = false, localStream = null, silentStream = null, voiceCalls = {}, voiceAudio = {};
+  function note(text){
+    var t = $("toast");
+    if (!t) return;
+    t.textContent = text;
+    t.classList.add("show");
+    clearTimeout(note._t);
+    note._t = setTimeout(function(){ t.classList.remove("show"); }, 3200);
+  }
+  function syncMicButton(){
+    var b = $("btnMic");
+    if (!b) return;
+    b.setAttribute("aria-pressed", micOn ? "true" : "false");
+    b.textContent = micOn ? "Tắt mic" : "Bật mic";
+  }
+  function outgoingStream(){
+    if (localStream && micOn) return localStream;
+    if (silentStream) return silentStream;
+    try {
+      var ctx = new AudioContext();
+      var osc = ctx.createOscillator();
+      var dst = ctx.createMediaStreamDestination();
+      osc.connect(dst);
+      osc.start();
+      var track = dst.stream.getAudioTracks()[0];
+      if (track) track.enabled = false;
+      silentStream = dst.stream;
+      if (ctx.resume) ctx.resume();
+    } catch (e) { silentStream = new MediaStream(); }
+    return silentStream;
+  }
+  function dropVoiceAudio(id){
+    var audio = voiceAudio[id];
+    if (!audio) return;
+    audio.srcObject = null;
+    audio.remove();
+    delete voiceAudio[id];
+  }
+  function playVoice(id, stream){
+    if (!stream) return;
+    var audio = voiceAudio[id];
+    if (!audio){
+      audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.setAttribute("playsinline", "");
+      audio.style.display = "none";
+      document.body.appendChild(audio);
+      voiceAudio[id] = audio;
+    }
+    if (audio.srcObject !== stream) audio.srcObject = stream;
+    var go = audio.play();
+    if (go && go.catch) go.catch(function(){});
+  }
+  function bindCall(id, call){
+    if (!call) return;
+    if (voiceCalls[id] && voiceCalls[id] !== call){ try { voiceCalls[id].close(); } catch (e){} }
+    voiceCalls[id] = call;
+    call.on("stream", function(stream){ playVoice(id, stream); });
+    call.on("close", function(){ if (voiceCalls[id] === call) delete voiceCalls[id]; dropVoiceAudio(id); });
+    call.on("error", function(){ if (voiceCalls[id] === call) delete voiceCalls[id]; });
+  }
+  function closeCalls(){
+    Object.keys(voiceCalls).forEach(function(id){ try { voiceCalls[id].close(); } catch (e){} });
+    voiceCalls = {};
+  }
+  function seatedPeerIds(){
+    var ids = [];
+    if (net.peer && mySeat >= 0 && net.mode === "host") ids.push(net.peer.id);
+    Object.keys(net.conns).forEach(function(k){
+      var c = net.conns[k];
+      if (c && c.open && c.seat >= 0 && ids.indexOf(c.peer) < 0) ids.push(c.peer);
+    });
+    return ids;
+  }
+  function refreshVoice(){
+    if (!net.peer || !net.peer.id || mySeat < 0){ closeCalls(); return; }
+    var ids = net.voiceList || [];
+    Object.keys(voiceCalls).forEach(function(id){
+      if (ids.indexOf(id) < 0){ try { voiceCalls[id].close(); } catch (e){} delete voiceCalls[id]; dropVoiceAudio(id); }
+    });
+    ids.forEach(function(id){
+      if (!id || id === net.peer.id || voiceCalls[id]) return;
+      if (net.peer.id < id){ try { bindCall(id, net.peer.call(id, outgoingStream())); } catch (e){} }
+    });
+  }
+  function publishVoices(){
+    if (net.mode !== "host") return;
+    net.voiceList = seatedPeerIds();
+    netSendAll({type:"voices", ids:net.voiceList});
+    refreshVoice();
+  }
+  function syncVoice(){
+    if (net.mode === "host") publishVoices();
+    else refreshVoice();
+  }
+  function askRevoice(){
+    closeCalls();
+    if (net.mode === "host") netSendAll({type:"revoice"});
+    else if (net.hostConn && net.hostConn.open){ try { net.hostConn.send({type:"revoice"}); } catch (e){} }
+    setTimeout(refreshVoice, 300);
+  }
+  function armPeer(peer){
+    if (!peer || peer._voiceArmed) return;
+    peer._voiceArmed = true;
+    peer.on("call", function(call){
+      try { call.answer(outgoingStream()); } catch (e){}
+      bindCall(call.peer, call);
+    });
+  }
+  function toggleMic(){
+    if (mySeat < 0){ note("Ngồi vào bàn rồi hãy bật mic."); return; }
+    if (!localStream){
+      if (!window.isSecureContext){ note("Chỉ bật được mic trên trang https."); return; }
+      var md = navigator.mediaDevices;
+      if (!md || !md.getUserMedia){ note("Trình duyệt này không mở được mic."); return; }
+      note("Đang xin mic…");
+      md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false })
+        .catch(function(){ return md.getUserMedia({ audio: true, video: false }); })
+        .then(function(stream){
+          localStream = stream;
+          micOn = true;
+          syncMicButton();
+          note("Đã bật mic. Người ngồi cùng bàn nghe được bạn.");
+          askRevoice();
+        })
+        .catch(function(){ note("Chưa được phép dùng mic. Cho phép micro rồi bấm lại."); });
+      return;
+    }
+    micOn = !micOn;
+    localStream.getAudioTracks().forEach(function(t){ t.enabled = micOn; });
+    syncMicButton();
+    note(micOn ? "Đã bật mic." : "Đã tắt mic.");
+  }
 
   function hostWithCode(fixed){
     if (typeof Peer==="undefined"){ setNetStatus("⚠️ Không tải được thư viện kết nối. Bạn vẫn chơi được trên máy này với bot."); return; }
@@ -699,6 +835,7 @@ export function bootWolf(onChange) {
     net.code=code;
     var peer=new Peer("masoi20-"+code.toLowerCase(), peerOpts);
     net.peer=peer;
+    armPeer(peer);
     peer.on("open", function(){
       net.mode="host"; $("roomCode").textContent=code;
       var url=new URL(location.href); url.hash=""; url.searchParams.set("soi", code);
@@ -738,9 +875,11 @@ export function bootWolf(onChange) {
         if (seat<0){ conn.send({type:"denied", reason:"Phòng đã đủ 20 người."}); return; }
         var nm=(msg.name||"").trim()||("Khách "+(seat+1));
         slots[seat]={name:nm,type:"human",you:false,alive:true,role:null,ready:false,votes:0,netConn:conn};
+        conn.seat=seat;
         conn.send({type:"welcome", seat:seat, code:net.code});
         log("🌐 <b>"+esc(nm)+"</b> vừa vào phòng và ngồi ghế "+(seat+1)+".","sys");
         render();
+        syncVoice();
         return;
       }
       if (msg.type==="leave" && seat>=0 && slots[seat] && slots[seat].netConn===conn){
@@ -748,9 +887,20 @@ export function bootWolf(onChange) {
         var leftName=slots[seat].name;
         slots[seat]={name:null,type:"empty",you:false,alive:true,role:null,ready:false,votes:0};
         seat=-1;
+        conn.seat=-1;
         try { conn.send({type:"left"}); } catch(e){}
         log("🚪 <b>"+esc(leftName)+"</b> đã rời ghế.","sys");
         render();
+        syncVoice();
+        return;
+      }
+      if (msg.type==="revoice"){
+        closeCalls();
+        Object.keys(net.conns).forEach(function(k){
+          var c = net.conns[k];
+          if (c && c !== conn && c.open){ try { c.send({type:"revoice"}); } catch (e){} }
+        });
+        setTimeout(refreshVoice, 300);
         return;
       }
       if (seat<0) return;
@@ -758,8 +908,8 @@ export function bootWolf(onChange) {
         var t=msg.idx;
         if (slots[t] && slots[t].type==="empty"){
           slots[t]=slots[seat]; slots[seat]={name:null,type:"empty",you:false,alive:true,role:null,ready:false,votes:0};
-          seat=t; conn.send({type:"welcome", seat:seat, code:net.code});
-          log("🪑 <b>"+esc(slots[t].name)+"</b> chuyển sang ghế "+(t+1)+".","sys"); render();
+          seat=t; conn.seat=seat; conn.send({type:"welcome", seat:seat, code:net.code});
+          log("🪑 <b>"+esc(slots[t].name)+"</b> chuyển sang ghế "+(t+1)+".","sys"); render(); syncVoice();
         }
       }
       if (msg.type==="chat"){
@@ -777,6 +927,7 @@ export function bootWolf(onChange) {
         else { slots[seat].type="bot"; slots[seat].netConn=null; log("📴 <b>"+esc(nm)+"</b> mất kết nối — bot sẽ chơi thay ghế này.","sys"); }
         if (net.waitingSeat===seat){ net.waitingSeat=-1; stopTimer(); if (phase==="night"){ nightStep++; runNightStep(); } }
         render();
+        syncVoice();
       }
     });
   }
@@ -794,6 +945,7 @@ export function bootWolf(onChange) {
     var code=($("codeInput").value||"").trim().toUpperCase();
     if (code.length<4){ setNetStatus("Hãy nhập mã phòng 4 ký tự mà chủ phòng gửi cho bạn."); return; }
     var peer=new Peer(undefined, peerOpts); net.peer=peer; net.code=code;
+    armPeer(peer);
     setNetStatus("⏳ Đang kết nối tới phòng "+esc(code)+"…");
     peer.on("open", function(){
       var conn=peer.connect("masoi20-"+code.toLowerCase(), {reliable:true});
@@ -824,7 +976,7 @@ export function bootWolf(onChange) {
     }
     if (msg.type==="left"){
       mySeat=-1; $("meCard").style.display="none"; $("roleReveal").classList.remove("show"); $("joinBtn").disabled=false;
-      publish(); return;
+      publish(); syncVoice(); return;
     }
     if (msg.type==="welcome"){
       net.mode="guest"; mySeat=msg.seat; guestRole=null;
@@ -832,9 +984,11 @@ export function bootWolf(onChange) {
       $("meCard").style.display="block"; $("meSeat").textContent="Ghế "+(mySeat+1)+" (phòng online "+(msg.code||"")+")";
       $("startBtn").style.display="none"; $("fillBtn").disabled=true; $("hostBtn").disabled=true; $("guestBtn").disabled=true;
       setNetStatus("✅ <b>Bạn đang ngồi ghế "+(mySeat+1)+"</b> trong phòng "+esc(msg.code||"")+". Chờ chủ phòng bắt đầu ván.");
-      publish();
+      publish(); syncVoice();
       return;
     }
+    if (msg.type==="voices"){ net.voiceList = msg.ids || []; refreshVoice(); return; }
+    if (msg.type==="revoice"){ closeCalls(); setTimeout(refreshVoice, 300); return; }
     if (net.mode!=="guest") return;
     if (msg.type==="snapshot"){ applySnapshot(msg.state); }
     if (msg.type==="log"){ logLocal(msg.html, msg.cls); }
