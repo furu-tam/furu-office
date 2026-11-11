@@ -1842,6 +1842,7 @@ function leaveDesk(silent) {
     try { if (peers[id].call) peers[id].call.close(); } catch (e) {}
   });
   peers = {};
+  clearInterval(dialTimer);
   if (myPeer) { try { myPeer.destroy(); } catch (e) {} myPeer = null; }
   mySlot = 0;
   if (localStream) { localStream.getTracks().forEach((tr) => tr.stop()); localStream = null; }
@@ -2448,6 +2449,7 @@ function openTablePeer() {
         wireMyPeer();
         announceSeat();
         dialKnown();
+        watchDials();
         refreshConnText();
         refreshScreens();
         resolve();
@@ -2516,10 +2518,12 @@ function dial(pid, tries) {
   const row = seatByPeer(pid);
   const entry = getEntry(pid);
   if (row) { entry.name = row.name || entry.name; entry.slot = row.slot || entry.slot; }
-  if (!entry.conn) {
+  const pendingFresh = entry.pending && performance.now() - entry.pendingAt < 5000;
+  if (!entry.conn && !pendingFresh) {
+    if (entry.pending) { try { entry.pending.close(); } catch (e) {} entry.pending = null; }
     try {
       const conn = myPeer.connect(pid, { reliable: true });
-      if (conn) wireConn(pid, conn);
+      if (conn) { entry.pending = conn; entry.pendingAt = performance.now(); wireConn(pid, conn); }
     } catch (e) {}
   }
   if (localStream && !entry.call) {
@@ -2528,6 +2532,19 @@ function dial(pid, tries) {
       if (call) attachCall(pid, call, tries || 0);
     } catch (e) {}
   }
+}
+let dialTimer = null;
+function watchDials() {
+  clearInterval(dialTimer);
+  dialTimer = setInterval(() => {
+    if (myIsland === 0 || !myPeer) return;
+    people.forEach((row) => {
+      if (row.table !== myIsland || row.id === myId || !row.peerId) return;
+      const entry = peers[row.peerId];
+      if (entry && entry.conn && entry.conn.open && (!localStream || entry.call)) return;
+      dial(row.peerId, 0);
+    });
+  }, 2500);
 }
 function attachCall(pid, call, tries) {
   const entry = getEntry(pid);
@@ -2551,8 +2568,9 @@ function attachCall(pid, call, tries) {
     const type = err && err.type;
     const cur = peers[pid];
     if (cur && cur.call === call) cur.call = null;
-    if ((type === 'peer-unavailable' || type === 'network') && (tries || 0) < 4 && myIsland > 0) setTimeout(() => dial(pid, (tries || 0) + 1), 900);
-    else if (type && myIsland > 0) setConn('err', 'Chưa nối được tiếng — bấm Bật tiếng để thử lại');
+    if ((type === 'peer-unavailable' || type === 'network' || type === 'server-error' || type === 'socket-error') && myIsland > 0) {
+      setTimeout(() => { if (myIsland > 0) dial(pid, (tries || 0) + 1); }, 1200);
+    }
   });
 }
 function wireConn(pid, conn) {
@@ -2560,6 +2578,7 @@ function wireConn(pid, conn) {
     const entry = getEntry(pid);
     if (entry.conn && entry.conn !== conn && entry.conn.open) { try { conn.close(); } catch (e) {} return; }
     entry.conn = conn;
+    entry.pending = null;
     sendTo(entry, { kind: 'hello', name: myName(), mic: micOn, cam: camOn });
     if (localStream && !entry.call) dial(pid, 0);
     refreshScreens();
@@ -2569,9 +2588,13 @@ function wireConn(pid, conn) {
   conn.on('close', () => {
     const entry = peers[pid];
     if (entry && entry.conn === conn) entry.conn = null;
+    if (entry && entry.pending === conn) entry.pending = null;
     refreshConnText();
   });
-  conn.on('error', () => {});
+  conn.on('error', () => {
+    const entry = peers[pid];
+    if (entry && entry.pending === conn && entry.conn !== conn) entry.pending = null;
+  });
 }
 function handleData(pid, m) {
   if (!m || typeof m !== 'object') return;
@@ -2618,16 +2641,28 @@ function removePeer(slot, announce) {
   }
 }
 
-const FLOOR_ID = 'furuoffice-floor';
-let floorGen = 0;
-let floorPeer = null;
-let floorHost = false;
-let floorLink = null;
-let floorConns = [];
 function sendPresence(msg) {
   if (floorHost) { applyPresence(msg, true); return; }
   if (floorLink && floorLink.open) floorLink.send(msg);
   else pendingPresence = msg;
+}
+function noteFloor(ok) {
+  if (myIsland !== 0) { if (ok) refreshConnText(); return; }
+  setConn(ok ? 'on' : '', ok ? 'Đã nối phòng. Ngồi cùng đảo để nói chuyện.' : 'Đang tìm mọi người trong phòng…');
+}
+function resolveSeatClash() {
+  if (myIsland === 0 || !mySlot) return;
+  const other = [...people.values()].find((r) => r.id !== myId && r.table === myIsland && r.slot === mySlot && r.id < myId);
+  if (!other) return;
+  const used = takenSlots(myIsland - 1);
+  const island = islandOf(myIsland);
+  if (!island) return;
+  let slot = 0;
+  for (let s = 1; s <= island.seats.length; s++) if (!used.has(s)) { slot = s; break; }
+  if (!slot || slot === mySlot) return;
+  mySlot = slot;
+  announceSeat();
+  sitCamera(island.seats[slot - 1]);
 }
 function notePeer(who) {
   if (!who || who.id === myId || who.table !== myIsland || !who.peerId || !myPeer) return;
@@ -2640,6 +2675,7 @@ function applyPresence(msg, relay) {
     upsertSeat(msg.who);
     if (relay) broadcastFloor(msg);
     notePeer(msg.who);
+    resolveSeatClash();
     refreshScreens();
   } else if (msg.kind === 'gone' && msg.id) {
     if (msg.id === myId && myIsland > 0) return;
@@ -2650,6 +2686,7 @@ function applyPresence(msg, relay) {
     const keep = new Set(msg.people.map((p) => p.id));
     [...people.keys()].forEach((id) => { if (id !== myId && !keep.has(id)) removeSeat(id); });
     msg.people.forEach((p) => { upsertSeat(p); notePeer(p); });
+    resolveSeatClash();
     refreshScreens();
   }
 }
@@ -2658,6 +2695,7 @@ function broadcastFloor(msg) {
 }
 function onFloorData(msg, from) {
   if (!msg || typeof msg !== 'object') return;
+  if (msg.kind === 'beat' || msg.kind === 'ping') { lastBeat = performance.now(); return; }
   if (msg.kind === 'here' && msg.who && floorHost) {
     if (from) from.whoId = msg.who.id;
     applyPresence(msg, true);
@@ -2671,83 +2709,151 @@ function onFloorData(msg, from) {
   }
   if (!floorHost && (msg.kind === 'here' || msg.kind === 'gone' || msg.kind === 'roster')) applyPresence(msg, false);
 }
+const HUBS = ['furu-hub-0', 'furu-hub-1', 'furu-hub-2', 'furu-hub-3', 'furu-hub-4', 'furu-hub-5', 'furu-hub-6', 'furu-hub-7'];
+let floorGen = 0;
+let floorPeer = null;
+let floorHost = false;
+let floorLink = null;
+let floorConns = [];
+let floorHub = -1;
+let floorTimer = null;
+let lastBeat = 0;
 function destroyFloor() {
+  clearInterval(floorTimer);
   try { if (floorPeer) floorPeer.destroy(); } catch (e) {}
   floorPeer = null;
   floorLink = null;
   floorHost = false;
   floorConns = [];
+  floorHub = -1;
 }
-function claimFloor() {
-  const gen = ++floorGen;
-  destroyFloor();
+function peerOpts(ice) {
+  return { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true };
+}
+function startFloorWatch(gen) {
+  clearInterval(floorTimer);
+  floorTimer = setInterval(() => {
+    if (gen !== floorGen) return;
+    if (floorHost) { broadcastFloor({ kind: 'beat', t: Date.now() }); return; }
+    if (!floorLink || !floorLink.open || performance.now() - lastBeat > 8000) claimFloor();
+  }, 2500);
+}
+function becomeHost(gen, p, index) {
+  floorPeer = p;
+  floorHost = true;
+  floorLink = null;
+  floorHub = index;
+  lastBeat = performance.now();
+  noteFloor(true);
+  p.on('connection', (conn) => {
+    floorConns.push(conn);
+    conn.on('open', () => {
+      try { conn.send({ kind: 'beat', t: Date.now() }); } catch (e) {}
+      try { conn.send({ kind: 'roster', people: rosterList() }); } catch (e) {}
+      if (roomLog.length) { try { conn.send({ kind: 'log', items: roomLog.slice(-30) }); } catch (e) {} }
+    });
+    conn.on('data', (msg) => {
+      if (msg && msg.kind === 'ping') { try { conn.send({ kind: 'beat', t: Date.now() }); } catch (e) {} return; }
+      onFloorData(msg, conn);
+    });
+    conn.on('close', () => {
+      floorConns = floorConns.filter((c) => c !== conn);
+      if (conn.whoId && conn.whoId !== myId && !floorConns.some((c) => c.whoId === conn.whoId)) {
+        removeSeat(conn.whoId);
+        broadcastFloor({ kind: 'gone', id: conn.whoId });
+      }
+    });
+  });
+  p.on('disconnected', () => { try { p.reconnect(); } catch (e) {} });
+  p.on('close', () => { if (gen === floorGen) setTimeout(claimFloor, 700); });
+  p.on('error', (err) => {
+    if (gen !== floorGen) return;
+    const type = err && err.type;
+    if (type === 'network' || type === 'socket-error' || type === 'socket-closed' || type === 'server-error') setTimeout(claimFloor, 800);
+  });
+  if (myPresence) broadcastFloor({ kind: 'here', who: myPresence });
+  startFloorWatch(gen);
+}
+function becomeClient(gen, p, conn, index) {
+  floorPeer = p;
+  floorLink = conn;
+  floorHost = false;
+  floorHub = index;
+  lastBeat = performance.now();
+  noteFloor(true);
+  const msg = pendingPresence || (myPresence ? { kind: 'here', who: myPresence } : null);
+  pendingPresence = null;
+  if (msg) { try { conn.send(msg); } catch (e) {} }
+  p.on('disconnected', () => { try { p.reconnect(); } catch (e) {} });
+  p.on('close', () => { if (gen === floorGen) setTimeout(claimFloor, 700); });
+  startFloorWatch(gen);
+}
+function probeHub(gen, index, ice) {
+  if (gen !== floorGen) return;
+  const p = new Peer(undefined, peerOpts(ice));
+  let settled = false;
+  const next = () => {
+    if (settled || gen !== floorGen) return;
+    settled = true;
+    try { p.destroy(); } catch (e) {}
+    scanHub(gen, index + 1);
+  };
+  const to = setTimeout(next, 9000);
+  p.on('open', () => {
+    if (settled || gen !== floorGen) { try { p.destroy(); } catch (e) {} return; }
+    const conn = p.connect(HUBS[index], { reliable: true });
+    const beatWait = setTimeout(next, 7000);
+    conn.on('open', () => { try { conn.send({ kind: 'ping' }); } catch (e) {} });
+    conn.on('data', (msg) => {
+      if (!msg) return;
+      if (!settled && (msg.kind === 'beat' || msg.kind === 'roster')) {
+        settled = true;
+        clearTimeout(to);
+        clearTimeout(beatWait);
+        becomeClient(gen, p, conn, index);
+      }
+      if (msg.kind === 'beat') { lastBeat = performance.now(); return; }
+      onFloorData(msg, null);
+    });
+    conn.on('close', next);
+    conn.on('error', next);
+  });
+  p.on('error', next);
+}
+function scanHub(gen, index) {
+  if (gen !== floorGen) return;
+  if (index >= HUBS.length) { setTimeout(() => { if (gen === floorGen) scanHub(gen, 0); }, 4000); return; }
   iceServers().then((ice) => {
     if (gen !== floorGen) return;
     let p;
-    try { p = new Peer(FLOOR_ID, { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true }); }
-    catch (e) { joinFloor(gen); return; }
+    try { p = new Peer(HUBS[index], peerOpts(ice)); }
+    catch (e) { scanHub(gen, index + 1); return; }
     let settled = false;
     const giveUp = () => {
       if (settled || gen !== floorGen) return;
       settled = true;
       try { p.destroy(); } catch (e) {}
-      joinFloor(gen);
+      probeHub(gen, index, ice);
     };
-    const to = setTimeout(giveUp, 8000);
+    const to = setTimeout(giveUp, 12000);
     p.on('open', () => {
-      if (gen !== floorGen) { try { p.destroy(); } catch (e) {} return; }
+      if (settled || gen !== floorGen) { try { p.destroy(); } catch (e) {} return; }
       settled = true;
       clearTimeout(to);
-      floorPeer = p;
-      floorHost = true;
-      p.on('connection', (conn) => {
-        floorConns.push(conn);
-        conn.on('open', () => {
-          conn.send({ kind: 'roster', people: rosterList() });
-          if (roomLog.length) conn.send({ kind: 'log', items: roomLog.slice(-30) });
-        });
-        conn.on('data', (msg) => onFloorData(msg, conn));
-        conn.on('close', () => {
-          floorConns = floorConns.filter((c) => c !== conn);
-          if (conn.whoId && conn.whoId !== myId && !floorConns.some((c) => c.whoId === conn.whoId)) {
-            removeSeat(conn.whoId);
-            broadcastFloor({ kind: 'gone', id: conn.whoId });
-          }
-        });
-      });
-      p.on('disconnected', () => { try { p.reconnect(); } catch (e) {} });
-      if (myPresence) broadcastFloor({ kind: 'here', who: myPresence });
+      becomeHost(gen, p, index);
     });
     p.on('error', (err) => {
       if (gen !== floorGen || settled) return;
       const type = err && err.type;
-      if (type === 'unavailable-id' || type === 'network' || type === 'server-error' || type === 'socket-error') giveUp();
+      if (type === 'unavailable-id' || type === 'network' || type === 'server-error' || type === 'socket-error' || type === 'socket-closed') giveUp();
     });
   });
 }
-function joinFloor(gen) {
-  if (gen !== floorGen) return;
-  iceServers().then((ice) => {
-    if (gen !== floorGen) return;
-    const p = new Peer(undefined, { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true });
-    floorPeer = p;
-    p.on('open', () => {
-      if (gen !== floorGen) { try { p.destroy(); } catch (e) {} return; }
-      const conn = p.connect(FLOOR_ID, { reliable: true });
-      floorLink = conn;
-      conn.on('open', () => {
-        const msg = pendingPresence || (myPresence ? { kind: 'here', who: myPresence } : null);
-        pendingPresence = null;
-        if (msg) conn.send(msg);
-      });
-      conn.on('data', (msg) => onFloorData(msg, null));
-      conn.on('close', () => { if (gen === floorGen) setTimeout(claimFloor, 800); });
-    });
-    p.on('error', (err) => {
-      if (gen !== floorGen) return;
-      if (err && err.type === 'peer-unavailable') setTimeout(claimFloor, 900);
-    });
-  });
+function claimFloor() {
+  const gen = ++floorGen;
+  destroyFloor();
+  noteFloor(false);
+  scanHub(gen, 0);
 }
 
 const raycaster = new THREE.Raycaster();
