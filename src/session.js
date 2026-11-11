@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import {
   hooks, setCamera, setTween, setFollow, setMyIsland, setHoveredIsland, setWatchingFish, setInSecurity, setFishPose, setSecurityPose, setSecurityBlocked,
-  AGENTS, AQ, G, REDUCED, SECURITY_URL, T, boat, box, burndownTex, buttons, camera, cancelMyCoffee, canvas, controls, desk, deskTagsEl, facesEl, fishBtn, fishPose, fishTag, follow, go, gulls, hoveredIsland, inSecurity, islands, labelsEl, meetingTvMat, meetingTvMesh, myIsland, onCoffeeOrder, orderCoffee, ortho, persp, pickers, rackMats, renderer, scene, seaMat, seated, securityBlocked, securityPose, securityTag, tags, tween, updateAgents, updateServer, watchingFish
+  AGENTS, AQ, G, REDUCED, SECURITY_URL, T, boat, box, burndownTex, buttons, camera, cancelMyCoffee, canvas, controls, desk, deskTagsEl, facesEl, fishBtn, fishPose, fishTag, follow, go, gulls, hoveredIsland, inSecurity, islands, labelsEl, meetingTvMat, meetingTvMesh, myIsland, onCoffeeOrder, orderCoffee, ortho, persp, pickers, rackMats, renderer,   scene, seaMat, seated, securityBlocked, securityPose, securityTag, tags, tween, updateAgents, updateServer, watchingFish,
+  LOOKS, normalizeLook, clampLook
 } from './world.js';
 
 // ---------- ngồi bàn làm việc: tiếng và camera trong cùng đảo ----------
@@ -24,6 +25,7 @@ const seenSay = new Set();
 let myId = rid(9);
 let mySlot = 0;
 let myPresence = null;
+let myLook = null;
 let pendingPresence = null;
 let localStream = null;
 let micOn = false, camOn = false;
@@ -227,6 +229,10 @@ function setProp(table, slot, visible) {
   const seat = seatOf(table, slot);
   if (seat && seat.prop) seat.prop.visible = visible;
 }
+function dropBody(g) {
+  g.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  if (g.parent) g.parent.remove(g);
+}
 function upsertSeat(info) {
   if (!info || !info.id || !info.table || !info.slot) return;
   const seat = seatOf(info.table, info.slot);
@@ -252,8 +258,17 @@ function upsertSeat(info) {
   if (prev) setProp(prev.table, prev.slot, true);
   setProp(row.table, row.slot, false);
   const sitY = seat.y || 0;
-  if (!row.body) row.body = seated(G.people, seat.x, seat.z, seat.yaw, sitY);
-  else { row.body.position.set(seat.x, sitY, seat.z); row.body.rotation.y = seat.yaw; }
+  const look = clampLook(info.look);
+  const sig = look ? [look.shirt, look.skin, look.hair, look.pants].join('.') : '';
+  row.look = look;
+  if (!row.body || (sig && sig !== row.lookSig)) {
+    if (row.body) dropBody(row.body);
+    row.body = seated(G.people, seat.x, seat.z, seat.yaw, sitY, look || undefined);
+    row.lookSig = sig;
+  } else {
+    row.body.position.set(seat.x, sitY, seat.z);
+    row.body.rotation.y = seat.yaw;
+  }
   row.body.userData.personId = info.id;
   ensureTapButton(row.el, info.id);
 }
@@ -262,14 +277,14 @@ function removeSeat(id) {
   if (!row) return;
   if (row.peerId && peers[row.peerId]) removePeer(row.peerId, false);
   setProp(row.table, row.slot, true);
-  if (row.body) G.people.remove(row.body);
+  if (row.body) dropBody(row.body);
   row.el.remove();
   const bubble = bubbles.get(id);
   if (bubble) { bubble.el.remove(); bubbles.delete(id); }
   people.delete(id);
 }
 function rosterList() {
-  return [...people.values()].map((r) => ({ id: r.id, name: r.name, table: r.table, slot: r.slot, peerId: r.peerId || '' }));
+  return [...people.values()].map((r) => ({ id: r.id, name: r.name, table: r.table, slot: r.slot, peerId: r.peerId || '', look: r.look }));
 }
 function announceSeat() {
   if (myIsland === 0) {
@@ -278,7 +293,7 @@ function announceSeat() {
     sendPresence({ kind: 'gone', id: myId });
     return;
   }
-  const who = { id: myId, name: myName(), table: myIsland, slot: mySlot, peerId: myCallId() };
+  const who = { id: myId, name: myName(), table: myIsland, slot: mySlot, peerId: myCallId(), look: myLook };
   myPresence = who;
   upsertSeat(who);
   sendPresence({ kind: 'here', who });
@@ -1768,12 +1783,114 @@ $('chatForm').addEventListener('submit', (e) => {
   sendSay(v);
   $('chatInput').value = '';
 });
+function storedLook() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('furu-office-look') || 'null');
+    const look = normalizeLook(raw);
+    if (!look) return null;
+    const name = String((raw && raw.name) || localStorage.getItem('furu-office-name') || '').slice(0, 24);
+    return { look, name };
+  } catch (e) { return null; }
+}
+function saveLook(colors, name) {
+  const look = normalizeLook(colors);
+  if (!look) return;
+  myLook = look;
+  const entry = { ...look, name: String(name || '').slice(0, 24) };
+  try {
+    localStorage.setItem('furu-office-look', JSON.stringify(entry));
+    localStorage.setItem('furu-office-name', entry.name);
+  } catch (e) {}
+  $('nameInput').value = entry.name;
+}
+const LOOK_ROWS = [
+  ['shirt', 'swShirt'],
+  ['skin', 'swSkin'],
+  ['hair', 'swHair'],
+  ['pants', 'swPants'],
+];
+let draft = { shirt: 0, skin: 0, hair: 0, pants: 0 };
+let lookView = null;
+let lookBody = null;
+function paintSwatches() {
+  for (const [key, id] of LOOK_ROWS) {
+    const box = $(id);
+    box.replaceChildren();
+    LOOKS[key].forEach((hex, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.style.background = '#' + hex.toString(16).padStart(6, '0');
+      b.setAttribute('aria-pressed', draft[key] === i ? 'true' : 'false');
+      b.setAttribute('aria-label', key + ' ' + (i + 1));
+      b.addEventListener('click', () => {
+        draft[key] = i;
+        paintSwatches();
+        paintLook();
+      });
+      box.appendChild(b);
+    });
+  }
+}
+function ensureLookView() {
+  if (lookView) return lookView;
+  const canvas = $('lookPreview');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+  renderer.setClearColor(0x0b2233, 1);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xfff4e6, 0x1a3344, 1.15));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+  sun.position.set(2, 4, 3);
+  scene.add(sun);
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 20);
+  camera.position.set(1.15, 1.2, 2.35);
+  camera.lookAt(0, 0.85, 0);
+  lookView = { renderer, scene, camera, canvas };
+  return lookView;
+}
+function paintLook() {
+  const view = ensureLookView();
+  if (lookBody) dropBody(lookBody);
+  lookBody = seated(view.scene, 0, 0, 0.55, 0, draft);
+  const w = view.canvas.clientWidth || 240;
+  const h = view.canvas.clientHeight || 320;
+  view.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  view.renderer.setSize(w, h, false);
+  view.camera.aspect = w / h;
+  view.camera.updateProjectionMatrix();
+  view.renderer.render(view.scene, view.camera);
+}
+function showMaker(doneLabel) {
+  const saved = storedLook();
+  draft = saved ? { ...saved.look } : { shirt: 0, skin: 0, hair: 0, pants: 0 };
+  $('lookName').value = (saved && saved.name) || $('nameInput').value || '';
+  $('lookGo').textContent = doneLabel;
+  paintSwatches();
+  $('maker').hidden = false;
+  paintLook();
+}
 try {
-  const saved = localStorage.getItem('furu-office-name');
-  if (saved) $('nameInput').value = saved;
-} catch (e) {}
+  const saved = storedLook();
+  if (saved) {
+    saveLook(saved.look, saved.name);
+    $('maker').hidden = true;
+  } else {
+    const named = localStorage.getItem('furu-office-name');
+    if (named) $('nameInput').value = named;
+    showMaker('Vào văn phòng');
+  }
+} catch (e) { showMaker('Vào văn phòng'); }
+$('lookForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  saveLook(draft, $('lookName').value.trim());
+  $('maker').hidden = true;
+  updateSelf();
+  if (myIsland > 0) announceSeat();
+});
+$('btnLook').addEventListener('click', () => showMaker('Xong'));
 $('nameInput').addEventListener('change', () => {
-  try { localStorage.setItem('furu-office-name', $('nameInput').value.trim()); } catch (e) {}
+  const name = $('nameInput').value.trim().slice(0, 24);
+  if (myLook) saveLook(myLook, name);
+  else { try { localStorage.setItem('furu-office-name', name); } catch (e) {} }
   updateSelf();
   if (myIsland > 0) {
     broadcast({ kind: 'hello', name: myName(), mic: micOn, cam: camOn });

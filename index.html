@@ -17,6 +17,7 @@
   <div class="row">
     <label for="nameInput">Tên</label>
     <input id="nameInput" type="text" maxlength="24" placeholder="Tên của bạn" autocomplete="off" />
+    <button type="button" id="btnLook">Đổi hình</button>
   </div>
   <div class="conn" id="connStatus"><span class="dot"></span><span id="connText">Ngồi cùng đảo là nói chuyện được với đồng nghiệp</span></div>
 </div>
@@ -71,6 +72,21 @@
   </div>
 </div>
 <div id="toast" role="status"></div>
+<div id="maker">
+  <form class="maker-card" id="lookForm">
+    <canvas id="lookPreview" width="440" height="560" aria-label="Xem trước nhân vật"></canvas>
+    <div>
+      <h2>Tạo nhân vật</h2>
+      <p>Người khác sẽ thấy đúng hình này khi bạn ngồi.</p>
+      <label class="look-name">Tên<input id="lookName" type="text" maxlength="24" placeholder="Tên của bạn" autocomplete="off" /></label>
+      <div class="look-row"><span>Áo</span><div id="swShirt"></div></div>
+      <div class="look-row"><span>Da</span><div id="swSkin"></div></div>
+      <div class="look-row"><span>Tóc</span><div id="swHair"></div></div>
+      <div class="look-row"><span>Quần</span><div id="swPants"></div></div>
+      <button type="submit" id="lookGo">Vào văn phòng</button>
+    </div>
+  </form>
+</div>
 <div id="tapNotice" role="status" hidden><b>Vỗ vai</b><span></span></div>
 <p id="err" hidden>Trình duyệt này không chạy được WebGL.</p>
 
