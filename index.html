@@ -1605,23 +1605,40 @@ function ensureTapButton(el, id) {
     el.appendChild(btn);
   }
 }
-function knock() {
+function patSound() {
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return;
   try {
     if (!audioCtx) audioCtx = new AC();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    const t0 = audioCtx.currentTime;
-    [0, 0.16].forEach((delay, i) => {
-      const o = audioCtx.createOscillator();
-      const g = audioCtx.createGain();
+    const ctx = audioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+    const t0 = ctx.currentTime + 0.02;
+    [0, 0.15].forEach((delay, i) => {
+      const dur = 0.08;
+      const n = Math.max(1, Math.floor(ctx.sampleRate * dur));
+      const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let s = 0; s < n; s++) data[s] = (Math.random() * 2 - 1) * Math.pow(1 - s / n, 3);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const cloth = ctx.createBiquadFilter();
+      cloth.type = 'lowpass';
+      cloth.frequency.value = i ? 980 : 760;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(i ? 0.5 : 0.62, t0 + delay);
+      src.connect(cloth); cloth.connect(g); g.connect(ctx.destination);
+      src.start(t0 + delay);
+      const o = ctx.createOscillator();
+      const og = ctx.createGain();
       o.type = 'sine';
-      o.frequency.value = i ? 540 : 320;
-      g.gain.setValueAtTime(0.0001, t0 + delay);
-      g.gain.exponentialRampToValueAtTime(0.09, t0 + delay + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + delay + 0.18);
-      o.connect(g); g.connect(audioCtx.destination);
-      o.start(t0 + delay); o.stop(t0 + delay + 0.2);
+      o.frequency.setValueAtTime(i ? 150 : 118, t0 + delay);
+      o.frequency.exponentialRampToValueAtTime(52, t0 + delay + 0.07);
+      og.gain.setValueAtTime(0.0001, t0 + delay);
+      og.gain.exponentialRampToValueAtTime(i ? 0.32 : 0.4, t0 + delay + 0.008);
+      og.gain.exponentialRampToValueAtTime(0.0001, t0 + delay + 0.09);
+      o.connect(og); og.connect(ctx.destination);
+      o.start(t0 + delay);
+      o.stop(t0 + delay + 0.1);
     });
   } catch (e) {}
 }
@@ -1646,6 +1663,7 @@ function tapShoulder(id) {
   onSay(say, floorHost, false);
   if (!floorHost && floorLink && floorLink.open) { try { floorLink.send(say); sent = true; } catch (e) {} }
   if (!sent) { toast('Đang nối phòng, thử lại sau giây lát.'); return; }
+  patSound();
   toast('Đã vỗ vai ' + row.name + '.');
 }
 function deliverTap(msg) {
@@ -1662,7 +1680,7 @@ function deliverTap(msg) {
   clearTimeout(box._h);
   box._h = setTimeout(() => { box.hidden = true; }, 7000);
   toast(name + ' vỗ vai bạn.', 5000);
-  knock();
+  patSound();
   const base = 'Văn Phòng furuCRM';
   document.title = 'Vỗ vai · ' + name;
   clearTimeout(deliverTap._t);
@@ -3003,7 +3021,7 @@ function claimFloor() {
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let down = null;
-canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
+canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; unlockAudio(); });
 canvas.addEventListener('pointerup', (e) => {
   if (!down) return;
   const dx = e.clientX - down.x, dy = e.clientY - down.y;
