@@ -34,6 +34,12 @@
   .dock button:hover { border-color: var(--accent); }
   .dock button[aria-pressed="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
   .dock button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .dock a {
+    font: 600 13px var(--f-body); color: var(--ink); background: var(--plate); border: 1px solid var(--line);
+    border-radius: 999px; padding: 8px 16px; cursor: pointer; backdrop-filter: blur(8px); text-decoration: none;
+  }
+  .dock a:hover { border-color: var(--accent); }
+  .dock a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   #labels { position: fixed; inset: 0; pointer-events: none; }
   .tag {
     position: absolute; transform: translate(-50%, -50%); white-space: nowrap; text-align: center;

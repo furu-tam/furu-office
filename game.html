@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="assets/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png"><link rel="apple-touch-icon" href="assets/apple-touch-icon.png"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Phòng game · furuCRM</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="vendor/fonts/fonts.css">
+<link rel="stylesheet" href="css/office.css">
+
+<canvas id="stage" aria-label="Phòng game. Một bàn tròn, 20 ghế. Bấm một ghế để ngồi rồi gieo xúc xắc."></canvas>
+<div id="faces"></div>
+<div class="plate">
+  <h1>Phòng <span>game</span></h1>
+  <p>Một bàn tròn · 20 ghế</p>
+  <p class="hint" id="hint">Bấm một ghế để ngồi</p>
+  <div class="row">
+    <label for="nameInput">Tên</label>
+    <input id="nameInput" type="text" maxlength="24" placeholder="Tên của bạn" autocomplete="off" />
+  </div>
+</div>
+<div class="dock" id="dockGame">
+  <button type="button" id="btnSit">Ngồi vào bàn</button>
+  <button type="button" id="btnRoll" hidden>Gieo xúc xắc</button>
+  <button type="button" class="invite" id="btnInvite">Mời</button>
+  <button type="button" class="leave" id="btnLeave" hidden>Rời ghế</button>
+  <a href="index.html">Về văn phòng</a>
+</div>
+<div id="toast" role="status"></div>
+<p id="err" hidden>Trình duyệt này không chạy được WebGL.</p>
+
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/three.module.js",
+  "three/addons/": "./vendor/three/addons/"
+} }
+</script>
+<script type="module" src="src/game-room.js"></script>
+</body></html>
