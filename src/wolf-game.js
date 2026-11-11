@@ -680,8 +680,9 @@ export function bootWolf(onChange) {
       action: $("actionMsg").innerHTML,
       turn: turnId, gm: gmText,
       win: $("winBanner").className.indexOf("show")>=0 ? {cls:$("winBanner").className, text:$("winBanner").textContent} : null,
-      slots: slots.map(function(s){
-        return { name:s.name, type:s.type, alive:s.alive, ready:s.ready, votes:s.votes,
+      slots: slots.map(function(s, i){
+        var peer = (s.netConn && s.netConn.peer) || (i === mySeat && net.peer ? net.peer.id : null);
+        return { name:s.name, type:s.type, alive:s.alive, ready:s.ready, votes:s.votes, peer:peer,
                  role: (s.type!=="empty" && (!s.alive || phase==="ended")) ? s.role : null };
       })
     };
@@ -689,7 +690,8 @@ export function bootWolf(onChange) {
   function broadcastState(){ if (net.mode==="host") netSendAll({type:"snapshot", state:snapshotState()}); }
   function setNetStatus(html){ $("netStatus").innerHTML = html; }
   var peerOpts = { config: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }], sdpSemantics: "unified-plan" }, secure: true };
-  var micOn = false, localStream = null, silentStream = null, voiceCalls = {}, voiceAudio = {};
+  var micOn = false, localStream = null, silentStream = null, voiceCalls = {}, voiceAudio = {}, voiceStreams = {};
+  var voiceCtx = null, localMeter = null, remoteMeters = {};
   function note(text){
     var t = $("toast");
     if (!t) return;
@@ -702,7 +704,9 @@ export function bootWolf(onChange) {
     var b = $("btnMic");
     if (!b) return;
     b.setAttribute("aria-pressed", micOn ? "true" : "false");
-    b.textContent = micOn ? "Tắt mic" : "Bật mic";
+    var label = b.querySelector(".mic-label");
+    if (label) label.textContent = micOn ? "Tắt mic" : "Bật mic";
+    else b.textContent = micOn ? "Tắt mic" : "Bật mic";
   }
   function outgoingStream(){
     if (localStream && micOn) return localStream;
@@ -726,9 +730,11 @@ export function bootWolf(onChange) {
     audio.srcObject = null;
     audio.remove();
     delete voiceAudio[id];
+    delete voiceStreams[id];
   }
   function playVoice(id, stream){
     if (!stream) return;
+    voiceStreams[id] = stream;
     var audio = voiceAudio[id];
     if (!audio){
       audio = document.createElement("audio");
@@ -751,7 +757,10 @@ export function bootWolf(onChange) {
     call.on("error", function(){ if (voiceCalls[id] === call) delete voiceCalls[id]; });
   }
   function closeCalls(){
-    Object.keys(voiceCalls).forEach(function(id){ try { voiceCalls[id].close(); } catch (e){} });
+    Object.keys(voiceCalls).forEach(function(id){
+      try { voiceCalls[id].close(); } catch (e){}
+      dropVoiceAudio(id);
+    });
     voiceCalls = {};
   }
   function seatedPeerIds(){
@@ -821,6 +830,71 @@ export function bootWolf(onChange) {
     localStream.getAudioTracks().forEach(function(t){ t.enabled = micOn; });
     syncMicButton();
     note(micOn ? "Đã bật mic." : "Đã tắt mic.");
+  }
+  function releaseMeter(meter){
+    if (!meter) return;
+    try { meter.src.disconnect(); } catch (e) {}
+  }
+  function makeMeter(stream){
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC || !stream || !stream.getAudioTracks().length) return null;
+    try {
+      if (!voiceCtx) voiceCtx = new AC();
+      if (voiceCtx.state === "suspended" && voiceCtx.resume) voiceCtx.resume();
+      var src = voiceCtx.createMediaStreamSource(stream);
+      var analyser = voiceCtx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.5;
+      src.connect(analyser);
+      return { stream:stream, src:src, analyser:analyser, data:new Uint8Array(analyser.fftSize) };
+    } catch (e) { return null; }
+  }
+  function rmsOf(meter){
+    meter.analyser.getByteTimeDomainData(meter.data);
+    var sum = 0, d = meter.data;
+    for (var i = 0; i < d.length; i++){ var v = (d[i] - 128) / 128; sum += v * v; }
+    return Math.sqrt(sum / d.length);
+  }
+  function levelOf(rms){
+    var n = (rms - 0.012) / 0.05;
+    return n <= 0 ? 0 : n >= 1 ? 1 : n;
+  }
+  function seatOfPeer(id){
+    if (!id) return -1;
+    if (net.peer && id === net.peer.id) return mySeat;
+    var keys = Object.keys(net.conns);
+    for (var i = 0; i < keys.length; i++){
+      var c = net.conns[keys[i]];
+      if (c && c.peer === id && c.seat >= 0) return c.seat;
+    }
+    for (var s = 0; s < slots.length; s++) if (slots[s] && slots[s].peer === id) return s;
+    return -1;
+  }
+  function talking(){
+    var out = [];
+    var localLive = !!(micOn && localStream && localStream.getAudioTracks().some(function(t){ return t.enabled && t.readyState === "live"; }));
+    var localLevel = 0;
+    if (localLive){
+      if (!localMeter || localMeter.stream !== localStream){ releaseMeter(localMeter); localMeter = makeMeter(localStream); }
+      if (localMeter) localLevel = levelOf(rmsOf(localMeter));
+    } else if (localMeter){ releaseMeter(localMeter); localMeter = null; }
+    if (mySeat >= 0) out.push({ seat: mySeat + 1, level: localLevel, live: localLive });
+    var heard = {};
+    Object.keys(voiceStreams).forEach(function(id){
+      var stream = voiceStreams[id];
+      var seat = seatOfPeer(id);
+      if (seat < 0 || seat === mySeat || !stream) return;
+      var live = stream.getAudioTracks().some(function(t){ return t.enabled && t.readyState === "live"; });
+      if (!live) return;
+      heard[id] = 1;
+      var meter = remoteMeters[id];
+      if (!meter || meter.stream !== stream){ releaseMeter(meter); meter = makeMeter(stream); if (meter) remoteMeters[id] = meter; }
+      out.push({ seat: seat + 1, level: meter ? levelOf(rmsOf(meter)) : 0, live: true });
+    });
+    Object.keys(remoteMeters).forEach(function(id){
+      if (!heard[id]){ releaseMeter(remoteMeters[id]); delete remoteMeters[id]; }
+    });
+    return out;
   }
 
   function hostWithCode(fixed){
@@ -1010,7 +1084,7 @@ export function bootWolf(onChange) {
     phase=st.phase; round=st.round;
     var myRoleLocal = guestRole;
     slots = st.slots.map(function(s,i){
-      return { name:s.name, type:s.type, alive:s.alive, ready:s.ready, votes:s.votes,
+      return { name:s.name, type:s.type, alive:s.alive, ready:s.ready, votes:s.votes, peer:s.peer || null,
                role: i===mySeat ? myRoleLocal : s.role, you: i===mySeat && s.type!=="empty", netConn:null };
     });
     setPhaseUI(st.title, st.sub, st.icon, st.cap, st.phase==="lobby"?"Sảnh chờ":(st.phase==="night"?"Đêm "+st.round:st.phase==="vote"?"Bỏ phiếu":st.phase==="ended"?"Kết ván":"Ngày "+st.round), st.phase==="night");
@@ -1066,5 +1140,5 @@ export function bootWolf(onChange) {
     document.head.appendChild(peerScript);
   }
   setTimeout(function(){ if (!netReady){ netReady=true; if (net.mode==="solo") setNetStatus("Chưa nối được phòng online. Bạn vẫn ngồi và chơi với bot trên máy này."); } }, 8000);
-  return { clickSeat: onSeatClick, joinFirst: joinFirstEmpty, leave: leave };
+  return { clickSeat: onSeatClick, joinFirst: joinFirstEmpty, leave: leave, talking: talking };
 }

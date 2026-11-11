@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildCharacter, clampLook, disposeAvatar, lookSig, randomLook, tickAvatar } from './avatar.js';
-import { bootWolf } from './wolf-game.js?v=6';
+import { bootWolf } from './wolf-game.js?v=7';
 
 const $ = (id) => document.getElementById(id);
 const SEATS = 20;
@@ -129,6 +129,33 @@ function dropRowBody(row) {
   row.body = null;
   row.avatar = null;
 }
+const MIC_HTML = '<span class="mic" hidden aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5.3-3A5.3 5.3 0 0 1 12 16.2 5.3 5.3 0 0 1 6.7 11H5a7 7 0 0 0 6 6.7V21h2v-3.3A7 7 0 0 0 19 11h-1.7z"/></svg><i></i><i></i><i></i></span>';
+function ensureName(el) {
+  if (el.querySelector('.nm')) return;
+  el.textContent = '';
+  el.insertAdjacentHTML('afterbegin', MIC_HTML);
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  el.appendChild(nm);
+}
+function setTalking(el, level, live) {
+  if (!el) return;
+  const mic = el.querySelector('.mic');
+  if (!mic) return;
+  mic.hidden = !live;
+  if (!live) { el.classList.remove('speaking'); el._spoke = 0; return; }
+  if (level > 0.08) el._spoke = performance.now();
+  const speaking = !!(el._spoke && performance.now() - el._spoke < 340);
+  el.classList.toggle('speaking', speaking);
+  const lift = speaking ? level : 0;
+  const shape = [0.55, 1, 0.68];
+  mic.querySelectorAll('i').forEach((bar, i) => {
+    const wobble = speaking && !reduced ? 0.12 * Math.sin(t * (8 + i * 2) + i) : 0;
+    bar.style.transform = 'scaleY(' + Math.max(0.22, Math.min(1, 0.25 + shape[i] * lift + wobble * lift)).toFixed(3) + ')';
+  });
+  const svg = mic.querySelector('svg');
+  if (svg) svg.style.transform = 'scale(' + (1 + lift * 0.16).toFixed(3) + ')';
+}
 function upsertSeat(slot, info) {
   let row = people.get(slot);
   if (!row) {
@@ -147,7 +174,8 @@ function upsertSeat(slot, info) {
   let label = name + (info.you ? ' · bạn' : '');
   if (!row.alive) label += ' · đã chết';
   else if (wolfPhase === 'vote' && info.votes) label += ' · ' + info.votes + ' phiếu';
-  row.el.textContent = label;
+  ensureName(row.el);
+  row.el.querySelector('.nm').textContent = label;
   row.el.classList.toggle('me', !!info.you);
   row.el.classList.toggle('dead', !row.alive);
   if (!row.body || sig !== row.lookSig) {
@@ -262,6 +290,16 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   t += dt;
   for (const row of people.values()) if (row.avatar && row.alive) tickAvatar(row.avatar, dt, t, reduced);
+  const talk = wolf.talking();
+  const heard = new Set();
+  for (const row of talk) {
+    heard.add(row.seat);
+    const who = people.get(row.seat);
+    if (who) setTalking(who.el, row.level, row.live);
+    if (row.seat === mySlot) setTalking($('btnMic'), row.level, row.live);
+  }
+  for (const row of people.values()) if (!heard.has(row.slot)) setTalking(row.el, 0, false);
+  if (!heard.has(mySlot)) setTalking($('btnMic'), 0, false);
   controls.update();
   const w = innerWidth, h = innerHeight;
   for (const row of people.values()) {
