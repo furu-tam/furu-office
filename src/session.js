@@ -1334,7 +1334,6 @@ function openTablePeer() {
   if (peerOpening) return peerOpening;
   const gen = ++claimGen;
   const n = myIsland;
-  const id = myCallId();
   setConn('', 'Đang nối cuộc gọi…');
   peerOpening = loadPeerLib().then((ok) => {
     if (gen !== claimGen || myIsland !== n) { peerOpening = null; return; }
@@ -1344,49 +1343,73 @@ function openTablePeer() {
       toast('Không tải được thư viện kết nối. Kiểm tra mạng rồi bấm Bật tiếng.', 5200);
       return;
     }
-    return iceServers().then((ice) => new Promise((resolve) => {
-      if (gen !== claimGen || myIsland !== n || myPeer) { peerOpening = null; resolve(); return; }
-      let p;
-      try { p = new Peer(id, { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true }); }
-      catch (e) {
-        peerOpening = null;
-        setConn('err', 'Không mở được cuộc gọi — bấm Bật tiếng để thử lại');
-        resolve();
-        return;
-      }
-      let settled = false;
-      const fail = (msg) => {
-        if (settled || gen !== claimGen) return;
-        settled = true;
-        clearTimeout(to);
-        try { p.destroy(); } catch (e) {}
-        peerOpening = null;
-        if (myIsland === n && !myPeer) { setConn('err', msg); $('btnTalk').hidden = false; }
-        resolve();
-      };
-      const to = setTimeout(() => fail('Mạng chậm — bấm Bật tiếng để thử lại'), 8000);
-      p.on('open', () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(to);
-        peerOpening = null;
-        if (gen !== claimGen || myIsland !== n) { try { p.destroy(); } catch (e) {} resolve(); return; }
-        myPeer = p;
-        wireMyPeer();
-        announceSeat();
-        dialKnown();
-        watchDials();
-        refreshConnText();
-        refreshScreens();
-        resolve();
-      });
-      p.on('error', (err) => {
-        if (!myPeer) fail('Chưa nối được cuộc gọi — bạn vẫn ngồi ở bàn. Bấm Bật tiếng để thử lại.');
-        else handlePeerError(err);
-      });
-    }));
+    return iceServers().then((ice) => openPeerAttempt(gen, n, ice, 0));
   });
   return peerOpening;
+}
+// Lỗi vĩnh viễn, retry vô ích; còn lại (network/socket/unavailable-id) đều thử lại.
+const PEER_FATAL = { 'browser-incompatible': 1, 'invalid-id': 1, 'invalid-key': 1, 'ssl-unavailable': 1 };
+const PEER_TRIES = 3;
+function openPeerAttempt(gen, n, ice, tries) {
+  return new Promise((resolve) => {
+    if (gen !== claimGen || myIsland !== n || myPeer) { peerOpening = null; resolve(); return; }
+    // Lần retry gắn hậu tố để né id "ma": peer cũ vừa destroy nhưng broker chưa kịp
+    // giải phóng id -> new Peer cùng id bị 'unavailable-id' -> chặn hoài mỗi lần bấm Bật tiếng.
+    const id = myCallId() + (tries ? '-r' + tries : '');
+    let p;
+    try { p = new Peer(id, { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true }); }
+    catch (e) {
+      peerOpening = null;
+      setConn('err', 'Không mở được cuộc gọi — bấm Bật tiếng để thử lại');
+      resolve();
+      return;
+    }
+    let settled = false;
+    const finish = (next) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(to);
+      try { p.destroy(); } catch (e) {}
+      next();
+    };
+    const fail = (msg, canRetry) => {
+      if (gen !== claimGen) { try { p.destroy(); } catch (e) {} resolve(); return; }
+      if (canRetry && tries + 1 < PEER_TRIES && myIsland === n && !myPeer) {
+        finish(() => {
+          setConn('', 'Đang nối lại cuộc gọi… (' + (tries + 2) + '/' + PEER_TRIES + ')');
+          setTimeout(() => resolve(openPeerAttempt(gen, n, ice, tries + 1)), 1000 + tries * 1000);
+        });
+      } else {
+        finish(() => {
+          peerOpening = null;
+          if (myIsland === n && !myPeer) { setConn('err', msg); $('btnTalk').hidden = false; }
+          resolve();
+        });
+      }
+    };
+    const to = setTimeout(() => fail('Mạng chậm — bấm Bật tiếng để thử lại', true), 8000);
+    p.on('open', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(to);
+      peerOpening = null;
+      if (gen !== claimGen || myIsland !== n) { try { p.destroy(); } catch (e) {} resolve(); return; }
+      myPeer = p;
+      wireMyPeer();
+      announceSeat();
+      dialKnown();
+      watchDials();
+      refreshConnText();
+      refreshScreens();
+      resolve();
+    });
+    p.on('error', (err) => {
+      if (settled && myPeer !== p) return;   // peer thua cuộc, đã có peer khác sống
+      if (myPeer === p) { handlePeerError(err); return; }
+      console.warn('[peer] open lỗi:', err && err.type, 'lần', tries + 1);
+      fail('Chưa nối được cuộc gọi — bạn vẫn ngồi ở bàn. Bấm Bật tiếng để thử lại.', !(err && PEER_FATAL[err.type]));
+    });
+  });
 }
 function wireMyPeer() {
   myPeer.on('connection', (conn) => {
@@ -1420,6 +1443,7 @@ function handlePeerError(err) {
   if (err.type === 'peer-unavailable') return;
   if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
     if (myIsland > 0) setConn('err', 'Mất nối tới máy chủ bắt tay — các máy đã nối vẫn nói chuyện bình thường');
+    if (err.type === 'socket-error' || err.type === 'socket-closed') { try { myPeer && myPeer.reconnect(); } catch (e) {} }
   }
 }
 function seatByPeer(pid) {
