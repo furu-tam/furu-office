@@ -96,7 +96,7 @@ export function bootWolf(onChange) {
   function publish(){
     if (typeof onChange!=="function") return;
     onChange({
-      phase: phase, round: round, mySeat: mySeat, night: phase==="night",
+      phase: phase, round: round, mySeat: mySeat, night: phase==="night", turn: turnId, gm: gmText,
       slots: slots.map(function(s){
         return { name:s.name, type:s.type, alive:s.alive, you:!!s.you, votes:s.votes||0 };
       })
@@ -133,6 +133,42 @@ export function bootWolf(onChange) {
   function setAction(html, small){
     $("actionMsg").innerHTML = html + (small? "<small>"+small+"</small>":"");
     if (net.mode==="host") broadcastState();
+  }
+  var turnId = "lobby", gmText = "", gmOn = true;
+  function showTurn(id){
+    turnId = id || "lobby";
+    var rail = $("turns");
+    if (!rail) return;
+    rail.hidden = turnId === "lobby";
+    var order = ["wolf","guard","seer","witch","dawn","vote"];
+    var at = order.indexOf(turnId);
+    rail.querySelectorAll("[data-turn]").forEach(function(el){
+      var key = el.getAttribute("data-turn");
+      var i = order.indexOf(key);
+      var hunter = key === "hunter";
+      el.hidden = hunter && turnId !== "hunter";
+      el.classList.toggle("now", key === turnId);
+      el.classList.toggle("done", turnId === "end" ? !hunter : (at > -1 && i > -1 && i < at));
+    });
+  }
+  function speakGm(text){
+    text = (text || "").trim();
+    if (!text || text === gmText) return;
+    gmText = text;
+    var line = $("gmLine");
+    if (line){ line.hidden = false; line.textContent = text; }
+    if (!gmOn || !window.speechSynthesis) return;
+    var u = new SpeechSynthesisUtterance(text);
+    u.lang = "vi-VN"; u.rate = 0.95;
+    var voices = speechSynthesis.getVoices();
+    for (var i = 0; i < voices.length; i++) if (/^vi/i.test(voices[i].lang)){ u.voice = voices[i]; break; }
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+  function announce(id, text){
+    showTurn(id);
+    speakGm(text);
+    publish();
   }
   function showNext(show){ $("nextBtn").style.display = show? "inline-flex":"none"; }
   function showStart(show){ $("startBtn").style.display = show? "inline-flex":"none"; }
@@ -270,6 +306,10 @@ export function bootWolf(onChange) {
     showWitch(false); showNext(false);
     var r=currentNightRole();
     if (!r){ resolveNight(); return; }
+    announce(r, r==="wolf" ? ("Đêm "+round+". Sói dậy. Chọn một người.")
+      : r==="guard" ? "Bảo vệ dậy. Chọn một người để che."
+      : r==="seer" ? "Tiên tri dậy. Chọn một người để soi."
+      : "Phù thủy dậy. Quyết định thuốc cứu, thuốc độc, hoặc bỏ qua.");
     var deciders = aliveSeats().filter(function(i){ return slots[i].role===r; });
     var localDecider = mySeat>=0 && deciders.indexOf(mySeat)>=0;
     var remoteSeat = -1;
@@ -320,7 +360,7 @@ export function bootWolf(onChange) {
       startTimer(45, function(){ if (net.waitingSeat===remoteSeat){ net.waitingSeat=-1; nightStep++; runNightStep(); } });
       return;
     }
-    if (!humanActs){ startTimer(3, function(){ nightStep++; runNightStep(); }); }
+    if (!humanActs){ startTimer(4, function(){ nightStep++; runNightStep(); }); }
     else { stopTimer(); $("timer").textContent="⏳"; }
   }
 
@@ -333,6 +373,7 @@ export function bootWolf(onChange) {
     if (night.witchPoison>=0 && night.witchPoison!==night.wolfTarget && slots[night.witchPoison].alive) deaths.push({idx:night.witchPoison, cause:"trúng thuốc độc của phù thủy"});
     if (night.witchPoison>=0 && night.wolfTarget===night.witchPoison) { /* poisoned while also wolf target: already counted once */ }
     phase="day";
+    announce("dawn", !deaths.length ? "Trời sáng. Đêm qua không ai chết." : "Trời sáng. "+deaths.map(function(d){ return slots[d.idx].name; }).join(" và ")+" đã chết.");
     setPhaseUI("Ngày "+round+" — trời sáng rồi!","Cả làng mở mắt. Quản trò công bố kết quả đêm qua, sau đó mọi người thảo luận trước khi bỏ phiếu.","☀️","Ngày "+round+" · bình minh","Ngày "+round,false);
     document.body.classList.remove("night");
     if (!deaths.length){
@@ -379,6 +420,7 @@ export function bootWolf(onChange) {
   function startVote(){
     stopTimer(); phase="vote"; selected=-1; votesCast={};
     slots.forEach(function(s){ s.votes=0; });
+    announce("vote", "Cả làng bỏ phiếu. Chọn một người để treo cổ.");
     setPhaseUI("Bỏ phiếu — ngày "+round,"Bấm vào người bạn nghi là Sói nhất để bỏ phiếu treo cổ. Bot sẽ tự bỏ phiếu khi hết giờ hoặc khi bạn đã vote.","🗳️","Biểu quyết · ngày "+round,"Bỏ phiếu",false);
     setAction("🗳️ <b>Đến giờ biểu quyết.</b> "+(mySeat>=0&&slots[mySeat].alive?"Bấm vào 1 người còn sống để bỏ phiếu.":"Bạn chỉ còn theo dõi — bot sẽ tự biểu quyết."),"Người bị nhiều phiếu nhất sẽ bị treo cổ và lộ vai.");
     log("🗳️ <b>Bỏ phiếu treo cổ — ngày "+round+"</b> bắt đầu!","sys");
@@ -404,13 +446,15 @@ export function bootWolf(onChange) {
     function castVoteSilent(v,t){ votesCast[v]=t; slots[t].votes++; }
     var tally = aliveSeats().map(function(i){return {i:i, v:slots[i].votes};}).sort(function(a,b){return b.v-a.v;});
     render();
-    if (!tally.length || tally[0].v===0){ log("🤷 Không ai bị phiếu nào — hôm nay làng không treo cổ ai.","sys"); afterElimination(-1); return; }
+    if (!tally.length || tally[0].v===0){ log("🤷 Không ai bị phiếu nào — hôm nay làng không treo cổ ai.","sys"); announce("vote", "Không ai bị treo cổ."); afterElimination(-1); return; }
     if (tally.length>1 && tally[1].v===tally[0].v){
       log("⚖️ Hòa phiếu "+tally[0].v+"–"+tally[1].v+"! Làng tranh cãi thêm rồi quyết định <b>không treo ai</b> hôm nay.","sys");
+      announce("vote", "Hòa phiếu. Hôm nay không treo ai.");
       afterElimination(-1); return;
     }
     var out=tally[0].i;
     log("🪢 Cả làng quyết định treo cổ <b>"+esc(slots[out].name)+"</b> với "+tally[0].v+" phiếu.","death");
+    announce("vote", slots[out].name+" bị treo cổ. Vai là "+ROLES[slots[out].role].name+".");
     var wasHunter = slots[out].role==="hunter";
     killSeat(out,"bị làng treo cổ",true);
     render();
@@ -430,6 +474,7 @@ export function bootWolf(onChange) {
 
   function hunterShoot(hunterIdx, done){
     phase="hunter"; hunterSeat=hunterIdx;
+    announce("hunter", "Thợ săn được bắn một phát cuối. Chọn một người.");
     if (slots[hunterIdx].netConn){
       net.waitingSeat=hunterIdx; net.waitingKind="hunter";
       setPhaseUI("Thợ săn rút súng!","Một người chơi online là Thợ săn đang chọn mục tiêu cuối cùng.","🏹","Phát súng cuối cùng","Thợ săn",false);
@@ -471,6 +516,7 @@ export function bootWolf(onChange) {
   }
   function endGame(villageWin){
     phase="ended"; stopTimer(); showNext(false); showWitch(false);
+    announce("end", villageWin ? "Dân làng thắng. Bầy sói đã hết." : "Ma sói thắng.");
     var b=$("winBanner");
     b.className="win-banner show "+(villageWin?"village":"wolves");
     b.textContent = villageWin? "🎉 DÂN LÀNG THẮNG! Bầy sói đã bị quét sạch khỏi làng." : "🐺 MA SÓI THẮNG! Bầy sói đã ngang hàng và nuốt trọn ngôi làng.";
@@ -583,6 +629,13 @@ export function bootWolf(onChange) {
     if (witchPoisonArmed){ witchPoisonArmed=false; witchArmSeat=-1; showWitch(true); runNightStep(); return; }
     showWitch(false); nightStep++; runNightStep();
   });
+  $("gmMute").addEventListener("click", function(){
+    gmOn = !gmOn;
+    this.setAttribute("aria-pressed", gmOn ? "true" : "false");
+    this.textContent = gmOn ? "Giọng quản trò" : "Bật giọng";
+    if (!gmOn && window.speechSynthesis) speechSynthesis.cancel();
+  });
+  if (window.speechSynthesis) speechSynthesis.getVoices();
   $("copyBtn").addEventListener("click", function(){
     var url=new URL(location.href); url.hash="";
     var code=($("roomCode").textContent||"").trim();
@@ -624,6 +677,7 @@ export function bootWolf(onChange) {
       title: $("phaseTitle").textContent, sub: $("phaseSub").textContent,
       icon: $("tableIcon").textContent, cap: $("tableCap").textContent,
       action: $("actionMsg").innerHTML,
+      turn: turnId, gm: gmText,
       win: $("winBanner").className.indexOf("show")>=0 ? {cls:$("winBanner").className, text:$("winBanner").textContent} : null,
       slots: slots.map(function(s){
         return { name:s.name, type:s.type, alive:s.alive, ready:s.ready, votes:s.votes,
@@ -817,6 +871,8 @@ export function bootWolf(onChange) {
     buildSeats(); buildSlotList();
     if (mySeat>=0 && (!slots[mySeat] || slots[mySeat].type==="empty")){ mySeat=-1; $("meCard").style.display="none"; }
     if (mySeat>=0 && slots[mySeat].type!=="empty") $("meSeat").textContent="Ghế "+(mySeat+1)+" — "+slots[mySeat].name+" (online)";
+    if (st.turn) showTurn(st.turn);
+    if (st.gm) speakGm(st.gm);
     publish();
   }
   function guestSeatClick(idx){

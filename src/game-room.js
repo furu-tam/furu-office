@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildCharacter, clampLook, disposeAvatar, lookSig, randomLook, tickAvatar } from './avatar.js';
-import { bootWolf } from './wolf-game.js';
+import { bootWolf } from './wolf-game.js?v=3';
 
 const $ = (id) => document.getElementById(id);
 const SEATS = 20;
@@ -211,7 +211,7 @@ function applyWolf(state) {
     hunter: 'Thợ săn chọn một người để bắn',
     ended: 'Ván kết thúc · bấm Ván mới trong bảng ma sói',
   };
-  $('hint').textContent = hints[wolfPhase] || hints.lobby;
+  $('hint').textContent = state.gm || hints[wolfPhase] || hints.lobby;
   scene.background.set(state.night ? 0x070b16 : 0x0b2233);
   sun.intensity = state.night ? 0.28 : 1.6;
 }

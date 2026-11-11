@@ -31,11 +31,22 @@
     </div>
     <div class="timer" id="timer">--:--</div>
   </div>
+  <ol id="turns" class="turns" hidden>
+    <li data-turn="wolf">Sói</li>
+    <li data-turn="guard">Bảo vệ</li>
+    <li data-turn="seer">Tiên tri</li>
+    <li data-turn="witch">Phù thủy</li>
+    <li data-turn="dawn">Bình minh</li>
+    <li data-turn="vote">Phiếu</li>
+    <li data-turn="hunter" hidden>Thợ săn</li>
+  </ol>
+  <p id="gmLine" class="gm-line" hidden></p>
   <div class="wolf-chips">
     <span class="chip">Phòng <b id="roomCode">----</b></span>
     <button class="copy-btn" id="copyBtn" type="button">Sao chép link mời</button>
     <span class="chip"><b id="countChip">0/20</b> người</span>
     <span class="chip" id="phaseChip">Giai đoạn: <b>Sảnh chờ</b></span>
+    <button class="copy-btn" id="gmMute" type="button" aria-pressed="true">Giọng quản trò</button>
   </div>
   <p class="wolf-status" id="netStatus">Đang nối phòng…</p>
   <div class="wolf-actions">
@@ -92,5 +103,5 @@
   "three/addons/": "./vendor/three/addons/"
 } }
 </script>
-<script type="module" src="src/game-room.js?v=2"></script>
+<script type="module" src="src/game-room.js?v=3"></script>
 </body></html>

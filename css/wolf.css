@@ -26,6 +26,19 @@
   font: 900 18px/1 var(--f-mono); font-variant-numeric: tabular-nums;
   border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px;
 }
+.turns {
+  display: flex; gap: 6px; list-style: none; margin: 12px 0 0; padding: 0; overflow-x: auto;
+}
+.turns li {
+  flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px;
+  padding: 5px 10px; font: 650 12.5px var(--f-body); color: var(--ink-dim);
+}
+.turns li.done { color: var(--ink); opacity: 0.45; }
+.turns li.now { color: #062028; background: var(--warm); border-color: var(--warm); font-weight: 800; }
+.gm-line {
+  margin: 10px 0 0; padding: 8px 0 8px 12px; border-left: 3px solid var(--warm);
+  font: 650 15px/1.45 var(--f-body); color: var(--ink);
+}
 .wolf-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 #wolf .chip, #wolf .copy-btn {
   display: inline-flex; align-items: center; gap: 6px;
