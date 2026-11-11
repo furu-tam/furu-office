@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { placeOffice, updateVoiceMeters } from './session.js';
+import { tickAvatar } from './avatar.js';
 import {
-  AGENTS, AQ, T, boat, camera, controls, follow, gulls, ortho, persp, rackMats, renderer, scene, seaMat, setTween, tags, tween, updateAgents, updateServer
+  AGENTS, AQ, G, REDUCED, T, boat, camera, controls, follow, gulls, ortho, persp, rackMats, renderer, scene, seaMat, setTween, tags, tween, updateAgents, updateServer
 } from './world.js';
 
 // ---------- loop ----------
@@ -15,6 +16,7 @@ renderer.setAnimationLoop(() => {
   AQ.update(dt);
   updateAgents(dt, T.value);
   updateServer(dt);
+  for (const person of G.people.children) if (person.userData.avatar) tickAvatar(person.userData.avatar, dt, T.value, REDUCED);
   for (const b of gulls) {
     b.a += b.speed * dt;
     const ca = Math.cos(b.a), sa = Math.sin(b.a);

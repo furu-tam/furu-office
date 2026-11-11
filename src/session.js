@@ -1,8 +1,8 @@
 import * as THREE from 'three';
+import { BODY_ACC, EXCL, ROWS, clampLook, createPreview, disposeAvatar, freshLook, lookSig, normalizeLook, randomLook } from './avatar.js';
 import {
   hooks, setCamera, setTween, setFollow, setMyIsland, setHoveredIsland, setWatchingFish, setInSecurity, setFishPose, setSecurityPose, setSecurityBlocked,
-  AGENTS, AQ, G, REDUCED, SECURITY_URL, T, boat, box, burndownTex, buttons, camera, cancelMyCoffee, canvas, controls, desk, deskTagsEl, facesEl, fishBtn, fishPose, fishTag, follow, go, gulls, hoveredIsland, inSecurity, islands, labelsEl, meetingTvMat, meetingTvMesh, myIsland, onCoffeeOrder, orderCoffee, ortho, persp, pickers, rackMats, renderer,   scene, seaMat, seated, securityBlocked, securityPose, securityTag, tags, tween, updateAgents, updateServer, watchingFish,
-  LOOKS, normalizeLook, clampLook
+  AGENTS, AQ, G, REDUCED, SECURITY_URL, T, boat, box, burndownTex, buttons, camera, cancelMyCoffee, canvas, controls, desk, deskTagsEl, facesEl, fishBtn, fishPose, fishTag, follow, go, gulls, hoveredIsland, inSecurity, islands, labelsEl, meetingTvMat, meetingTvMesh, myIsland, onCoffeeOrder, orderCoffee, ortho, persp, pickers, rackMats, renderer, scene, seaMat, seated, securityBlocked, securityPose, securityTag, tags, tween, updateAgents, updateServer, watchingFish
 } from './world.js';
 
 // ---------- ngồi bàn làm việc: tiếng và camera trong cùng đảo ----------
@@ -229,10 +229,7 @@ function setProp(table, slot, visible) {
   const seat = seatOf(table, slot);
   if (seat && seat.prop) seat.prop.visible = visible;
 }
-function dropBody(g) {
-  g.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
-  if (g.parent) g.parent.remove(g);
-}
+function dropBody(g) { disposeAvatar(g); }
 function upsertSeat(info) {
   if (!info || !info.id || !info.table || !info.slot) return;
   const seat = seatOf(info.table, info.slot);
@@ -259,7 +256,7 @@ function upsertSeat(info) {
   setProp(row.table, row.slot, false);
   const sitY = seat.y || 0;
   const look = clampLook(info.look);
-  const sig = look ? [look.shirt, look.skin, look.hair, look.pants].join('.') : '';
+  const sig = lookSig(look);
   row.look = look;
   if (!row.body || (sig && sig !== row.lookSig)) {
     if (row.body) dropBody(row.body);
@@ -1803,70 +1800,85 @@ function saveLook(colors, name) {
   } catch (e) {}
   $('nameInput').value = entry.name;
 }
-const LOOK_ROWS = [
-  ['shirt', 'swShirt'],
-  ['skin', 'swSkin'],
-  ['hair', 'swHair'],
-  ['pants', 'swPants'],
-];
-let draft = { shirt: 0, skin: 0, hair: 0, pants: 0 };
-let lookView = null;
-let lookBody = null;
-function paintSwatches() {
-  for (const [key, id] of LOOK_ROWS) {
-    const box = $(id);
-    box.replaceChildren();
-    LOOKS[key].forEach((hex, i) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.style.background = '#' + hex.toString(16).padStart(6, '0');
-      b.setAttribute('aria-pressed', draft[key] === i ? 'true' : 'false');
-      b.setAttribute('aria-label', key + ' ' + (i + 1));
-      b.addEventListener('click', () => {
-        draft[key] = i;
-        paintSwatches();
-        paintLook();
-      });
-      box.appendChild(b);
-    });
+let draft = freshLook();
+let lookPreview = null;
+const lookRefreshers = [];
+function copyLook(look) {
+  const next = normalizeLook(look) || freshLook();
+  return { ...next, acc: [...next.acc] };
+}
+function refreshLook() { lookRefreshers.forEach((fn) => fn()); }
+function previewLook() {
+  if (!lookPreview) {
+    lookPreview = createPreview($('lookPreview'));
+    if (!lookPreview) $('lookErr').hidden = false;
   }
+  if (!lookPreview) return;
+  lookPreview.setLook(draft);
+  lookPreview.setName($('lookName').value.trim());
 }
-function ensureLookView() {
-  if (lookView) return lookView;
-  const canvas = $('lookPreview');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-  renderer.setClearColor(0x0b2233, 1);
-  const scene = new THREE.Scene();
-  scene.add(new THREE.HemisphereLight(0xfff4e6, 0x1a3344, 1.15));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-  sun.position.set(2, 4, 3);
-  scene.add(sun);
-  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 20);
-  camera.position.set(1.15, 1.2, 2.35);
-  camera.lookAt(0, 0.85, 0);
-  lookView = { renderer, scene, camera, canvas };
-  return lookView;
-}
-function paintLook() {
-  const view = ensureLookView();
-  if (lookBody) dropBody(lookBody);
-  lookBody = seated(view.scene, 0, 0, 0.55, 0, draft);
-  const w = view.canvas.clientWidth || 240;
-  const h = view.canvas.clientHeight || 320;
-  view.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
-  view.renderer.setSize(w, h, false);
-  view.camera.aspect = w / h;
-  view.camera.updateProjectionMatrix();
-  view.renderer.render(view.scene, view.camera);
+function buildLookForm() {
+  const rows = $('lookRows');
+  if (rows.childElementCount) return;
+  for (const row of ROWS) {
+    const line = document.createElement('div');
+    line.className = 'row';
+    const label = document.createElement('span');
+    label.textContent = row.label;
+    label.id = 'lab-' + row.key;
+    const opts = document.createElement('div');
+    opts.className = 'opts' + (row.type === 'multi' ? ' multi' : '');
+    opts.setAttribute('role', 'group');
+    opts.setAttribute('aria-labelledby', label.id);
+    const buttons = [];
+    const items = row.type === 'swatch' ? row.colors.map((color, i) => [i, row.names[i], color]) : row.opts;
+    for (const [value, text, color] of items) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      if (row.type === 'swatch') {
+        button.className = 'sw';
+        button.style.background = color;
+        button.setAttribute('aria-label', text);
+        button.title = text;
+      } else {
+        button.className = 'chip';
+        button.textContent = text;
+      }
+      button.addEventListener('click', () => {
+        if (row.type === 'multi') {
+          if (draft.acc.includes(value)) draft.acc = draft.acc.filter((item) => item !== value);
+          else {
+            const group = EXCL.find((g) => g.includes(value));
+            draft.acc = draft.acc.filter((item) => !(group && group.includes(item))).concat(value);
+          }
+          if (lookPreview) lookPreview.focus(BODY_ACC.has(value) ? 'full' : 'face');
+        } else {
+          draft[row.key] = value;
+          if (lookPreview) lookPreview.focus(row.focus);
+        }
+        refreshLook();
+        previewLook();
+      });
+      buttons.push([button, value]);
+      opts.appendChild(button);
+    }
+    lookRefreshers.push(() => buttons.forEach(([button, value]) => {
+      button.setAttribute('aria-pressed', String(row.type === 'multi' ? draft.acc.includes(value) : draft[row.key] === value));
+    }));
+    line.append(label, opts);
+    rows.appendChild(line);
+  }
 }
 function showMaker(doneLabel) {
   const saved = storedLook();
-  draft = saved ? { ...saved.look } : { shirt: 0, skin: 0, hair: 0, pants: 0 };
+  draft = saved ? copyLook(saved.look) : freshLook();
   $('lookName').value = (saved && saved.name) || $('nameInput').value || '';
   $('lookGo').textContent = doneLabel;
-  paintSwatches();
+  buildLookForm();
+  refreshLook();
   $('maker').hidden = false;
-  paintLook();
+  previewLook();
+  if (lookPreview) lookPreview.start();
 }
 try {
   const saved = storedLook();
@@ -1879,10 +1891,26 @@ try {
     showMaker('Vào văn phòng');
   }
 } catch (e) { showMaker('Vào văn phòng'); }
+$('lookName').addEventListener('input', () => { if (lookPreview) lookPreview.setName($('lookName').value.trim()); });
+$('camFull').addEventListener('click', () => lookPreview && lookPreview.focus('full'));
+$('camFace').addEventListener('click', () => lookPreview && lookPreview.focus('face'));
+$('lookSpin').addEventListener('click', () => {
+  const on = $('lookSpin').getAttribute('aria-pressed') !== 'true';
+  $('lookSpin').setAttribute('aria-pressed', String(on));
+  if (lookPreview) lookPreview.setSpin(on);
+});
+$('lookRand').addEventListener('click', () => {
+  const name = $('lookName').value;
+  draft = randomLook();
+  $('lookName').value = name;
+  refreshLook();
+  previewLook();
+});
 $('lookForm').addEventListener('submit', (e) => {
   e.preventDefault();
   saveLook(draft, $('lookName').value.trim());
   $('maker').hidden = true;
+  if (lookPreview) lookPreview.stop();
   updateSelf();
   if (myIsland > 0) announceSeat();
 });

@@ -73,19 +73,30 @@
 </div>
 <div id="toast" role="status"></div>
 <div id="maker">
-  <form class="maker-card" id="lookForm">
-    <canvas id="lookPreview" width="440" height="560" aria-label="Xem trước nhân vật"></canvas>
-    <div>
-      <h2>Tạo nhân vật</h2>
-      <p>Người khác sẽ thấy đúng hình này khi bạn ngồi.</p>
-      <label class="look-name">Tên<input id="lookName" type="text" maxlength="24" placeholder="Tên của bạn" autocomplete="off" /></label>
-      <div class="look-row"><span>Áo</span><div id="swShirt"></div></div>
-      <div class="look-row"><span>Da</span><div id="swSkin"></div></div>
-      <div class="look-row"><span>Tóc</span><div id="swHair"></div></div>
-      <div class="look-row"><span>Quần</span><div id="swPants"></div></div>
-      <button type="submit" id="lookGo">Vào văn phòng</button>
+  <div class="maker-card">
+    <div class="preview">
+      <canvas id="lookPreview" aria-label="Xem trước nhân vật 3D, kéo để xoay"></canvas>
+      <p id="lookErr" hidden>Trình duyệt này không chạy được WebGL.</p>
+      <div class="pv-tools" role="group" aria-label="Góc nhìn">
+        <button id="camFull" type="button" aria-pressed="true">Toàn thân</button>
+        <button id="camFace" type="button" aria-pressed="false">Cận mặt</button>
+        <button id="lookSpin" type="button" aria-pressed="false">Tự xoay</button>
+      </div>
     </div>
-  </form>
+    <form class="form" id="lookForm">
+      <h2>Tạo nhân vật</h2>
+      <p class="lede">Người khác sẽ thấy đúng hình này khi bạn ngồi.</p>
+      <div class="name-field">
+        <label for="lookName">Tên</label>
+        <input id="lookName" maxlength="24" autocomplete="off" placeholder="Tên của bạn" />
+      </div>
+      <div class="rows" id="lookRows"></div>
+      <div class="actions">
+        <button id="lookGo" class="primary" type="submit">Vào văn phòng</button>
+        <button id="lookRand" class="ghost" type="button">Ngẫu nhiên</button>
+      </div>
+    </form>
+  </div>
 </div>
 <div id="tapNotice" role="status" hidden><b>Vỗ vai</b><span></span></div>
 <p id="err" hidden>Trình duyệt này không chạy được WebGL.</p>

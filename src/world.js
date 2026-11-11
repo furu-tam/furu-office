@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildLayout, WATERFALL_PATH } from '../aquarium-assets.js';
+import { buildCharacter, clampLook, randomLook } from './avatar.js';
 import { buildTetra, buildShrimp, buildSnail } from '../aquarium-fauna.js';
 
 
@@ -247,36 +248,10 @@ const mat = {
   trunk: M(0x8a6a4a, 0.95),
   frond: M(0x3f8a3a, 0.85, { side: THREE.DoubleSide, flatShading: true }),
 };
-const LOOK_HEX = {
-  shirt: [0x2fa89a, 0xff8a5b, 0x3b6fb6, 0xf2c14e, 0xe8eef0, 0x7a5cc4, 0x2b3a42, 0xd94f6a],
-  skin: [0xf1c9a5, 0xd9a47c, 0xb97a52],
-  hair: [0x1d1612, 0x3a2a1e, 0x14100d],
-  pants: [0x2b3a42, 0x3a4c5e, 0x5a4a3c],
-};
-export const LOOKS = LOOK_HEX;
-const SHIRTS = LOOK_HEX.shirt.map(c => M(c, 0.85));
-const SKIN = LOOK_HEX.skin.map(c => M(c, 0.7));
-const HAIR = LOOK_HEX.hair.map(c => M(c, 0.9));
-const PANTS = LOOK_HEX.pants.map(c => M(c, 0.9));
-function lookParts(raw, strict) {
-  if (!raw || typeof raw !== 'object') return null;
-  const out = { v: 1 };
-  let seen = false;
-  for (const key of Object.keys(LOOK_HEX)) {
-    const n = Number(raw[key]);
-    const ok = Number.isInteger(n) && n >= 0 && n < LOOK_HEX[key].length;
-    if (strict && !ok) return null;
-    if (ok) seen = true;
-    out[key] = ok ? n : 0;
-  }
-  return seen || strict ? out : null;
-}
-export function normalizeLook(raw) {
-  return lookParts(raw, true);
-}
-export function clampLook(raw) {
-  return lookParts(raw, false);
-}
+const SHIRTS = [0x2fa89a, 0xff8a5b, 0x3b6fb6, 0xf2c14e, 0xe8eef0, 0x7a5cc4, 0x2b3a42, 0xd94f6a].map(c => M(c, 0.85));
+const SKIN = [0xf1c9a5, 0xd9a47c, 0xb97a52].map(c => M(c, 0.7));
+const HAIR = [0x1d1612, 0x3a2a1e, 0x14100d].map(c => M(c, 0.9));
+const PANTS = [0x2b3a42, 0x3a4c5e, 0x5a4a3c].map(c => M(c, 0.9));
 
 // ---------- helpers ----------
 export const G = Object.fromEntries(['exterior', 'shell', 'workspace', 'sea_desks', 'cafe', 'lounge', 'nap_room', 'meeting', 'security', 'booths', 'server', 'reception', 'balcony', 'plants', 'people'].map(n => {
@@ -310,17 +285,10 @@ function solidWall(x0, z0, x1, z1, h, parent, m = mat.wall) {
 // people: model faces +Z
 export function seated(parent, x, z, yaw, y0 = 0, look) {
   const g = new THREE.Group(); g.position.set(x, y0, z); g.rotation.y = yaw;
-  const fixed = normalizeLook(look);
-  const shirt = fixed ? SHIRTS[fixed.shirt] : pick(SHIRTS);
-  const skin = fixed ? SKIN[fixed.skin] : pick(SKIN);
-  const pants = fixed ? PANTS[fixed.pants] : pick(PANTS);
-  const hairMat = fixed ? HAIR[fixed.hair] : pick(HAIR);
-  box(0.36, 0.13, 0.42, pants, 0, 0.56, 0.1, g);
-  box(0.32, 0.44, 0.12, pants, 0, 0.3, 0.32, g);
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.3, 4, 10), shirt); torso.position.set(0, 0.9, -0.06); torso.castShadow = true; g.add(torso);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 10), skin); head.position.set(0, 1.33, -0.03); head.castShadow = true; g.add(head);
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.115, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), hairMat); hair.position.copy(head.position).add(new THREE.Vector3(0, 0.01, -0.01)); g.add(hair);
-  for (const s of [-1, 1]) { const a = box(0.08, 0.08, 0.34, shirt, s * 0.2, 0.86, 0.12, g); a.rotation.x = 0.25; }
+  const avatar = buildCharacter(clampLook(look) || randomLook());
+  avatar.root.position.z = -0.2;
+  g.add(avatar.root);
+  g.userData.avatar = avatar;
   parent.add(g); return g;
 }
 function walkerModel() {
