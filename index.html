@@ -91,6 +91,8 @@
     border: 6px solid transparent; border-top-color: rgba(8, 28, 42, 0.92); border-bottom: 0;
   }
   .dock button.talk { background: #164e56; border-color: var(--accent); }
+  .dock button.coffee { background: #6b3a22; border-color: #e0a070; color: #ffe7c8; }
+  .dock button.coffee:disabled { opacity: 0.6; cursor: default; }
   .dock button.off { background: #8a3b32; border-color: #e07060; }
   .mic {
     display: inline-flex; align-items: flex-end; gap: 1.5px; height: 13px;
@@ -279,6 +281,7 @@
   <button type="button" id="btnShare" hidden>Chia sẻ màn hình</button>
   <button type="button" id="btnTv" hidden>Xem full</button>
   <button type="button" id="btnChat">Chat</button>
+  <button type="button" class="coffee" id="btnCoffee" hidden>Gọi cà phê</button>
   <button type="button" class="leave" id="btnLeave">Rời bàn</button>
 </div>
 <div id="tvFull" hidden>
@@ -593,6 +596,18 @@ function walkerModel() {
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 10), SKIN[1]); head.position.y = 1.62; head.castShadow = true; g.add(head);
   const hair = new THREE.Mesh(new THREE.SphereGeometry(0.115, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), HAIR[0]); hair.position.y = 1.63; g.add(hair);
   const mug = cyl(0.04, 0.035, 0.1, mat.white, 0.24, 1.0, 0.12, g, 12);
+  const tc = document.createElement('canvas'); tc.width = 256; tc.height = 64;
+  const paint = () => {
+    const ctx = tc.getContext('2d');
+    ctx.clearRect(0, 0, 256, 64);
+    ctx.fillStyle = 'rgba(8,28,42,0.9)'; ctx.beginPath(); ctx.roundRect(4, 8, 248, 48, 16); ctx.fill();
+    ctx.fillStyle = '#f2c14e'; ctx.font = '700 28px "Be Vietnam Pro", system-ui, sans-serif'; ctx.fillText('Phục vụ', 48, 42);
+  };
+  paint();
+  const tex = new THREE.CanvasTexture(tc); tex.colorSpace = THREE.SRGBColorSpace;
+  document.fonts?.ready.then(() => { paint(); tex.needsUpdate = true; });
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
+  tag.scale.set(0.72, 0.18, 1); tag.position.y = 1.95; g.add(tag);
   return { g, legs, mug };
 }
 function officeChair(parent, x, z, yaw) {
@@ -1434,6 +1449,269 @@ function pathAt(d) {
   const t = (d - CUM[i - 1]) / (CUM[i] - CUM[i - 1]);
   return { p: PATH[i - 1].clone().lerp(PATH[i], t), dir: PATH[i].clone().sub(PATH[i - 1]).normalize() };
 }
+const COFFEE_NODES = [
+  { id: 'counter', p: new THREE.Vector2(-11.7, -4.5) },
+  { id: 'lane', p: new THREE.Vector2(-10.9, -3.2) },
+  { id: 'north', p: new THREE.Vector2(-10.9, 1.4) },
+  { id: 'west', p: new THREE.Vector2(-8, 2) },
+  { id: 'mid', p: new THREE.Vector2(1.4, 2) },
+  { id: 'east', p: new THREE.Vector2(8.2, 2) },
+  { id: 'loungeIn', p: new THREE.Vector2(5.4, -2.0) },
+  { id: 'loungeFront', p: new THREE.Vector2(5.4, -4.6) },
+];
+const COFFEE_LINKS = {
+  counter: ['lane'], lane: ['counter', 'north'], north: ['lane', 'west'], west: ['north', 'mid'],
+  mid: ['west', 'east'], east: ['mid', 'loungeIn'], loungeIn: ['east', 'loungeFront'], loungeFront: ['loungeIn'],
+};
+const serve = { queue: [], active: null };
+const servedCups = new Map();
+const seenCoffee = new Set();
+function coffeeNode(id) { return COFFEE_NODES.find((n) => n.id === id); }
+function nearestCoffeeId(v) {
+  let best = COFFEE_NODES[0], d = Infinity;
+  for (const n of COFFEE_NODES) {
+    const dd = v.distanceToSquared(n.p);
+    if (dd < d) { d = dd; best = n; }
+  }
+  return best.id;
+}
+function coffeePath(fromId, toId) {
+  if (fromId === toId) return [fromId];
+  const q = [fromId];
+  const prev = { [fromId]: '' };
+  while (q.length) {
+    const id = q.shift();
+    for (const n of COFFEE_LINKS[id]) {
+      if (prev[n] != null) continue;
+      prev[n] = id;
+      if (n === toId) {
+        const out = [n];
+        let cur = n;
+        while (prev[cur]) { cur = prev[cur]; out.push(cur); }
+        return out.reverse();
+      }
+      q.push(n);
+    }
+  }
+  return [fromId];
+}
+function walkerPos() { return new THREE.Vector2(walker.g.position.x, walker.g.position.z); }
+function coffeeRoute(from, to) {
+  const ids = coffeePath(nearestCoffeeId(from), nearestCoffeeId(to));
+  const pts = ids.map((id) => coffeeNode(id).p.clone());
+  if (pts.length && from.distanceTo(pts[0]) < 0.4) pts.shift();
+  pts.push(to.clone());
+  return pts;
+}
+function nearestPathPoint(pos) {
+  let best = PATH[0].clone(), bestD = Infinity, along = 0;
+  for (let i = 1; i < PATH.length; i++) {
+    const a = PATH[i - 1], b = PATH[i], ab = b.clone().sub(a), len = ab.length();
+    const t = THREE.MathUtils.clamp(pos.clone().sub(a).dot(ab) / (len * len), 0, 1);
+    const closest = a.clone().lerp(b, t);
+    const dist = closest.distanceToSquared(pos);
+    if (dist < bestD) { bestD = dist; best = closest; along = CUM[i - 1] + t * (CUM[i] - CUM[i - 1]); }
+  }
+  return { p: best, d: along };
+}
+function serveTargets(seat) {
+  const fx = Math.sin(seat.yaw), fz = Math.cos(seat.yaw);
+  const sx = Math.cos(seat.yaw), sz = -Math.sin(seat.yaw);
+  const cafe = seat.x < -4;
+  const stand = cafe
+    ? new THREE.Vector2(seat.x + fx * 0.95 + sx * 0.35, seat.z + fz * 0.95 + sz * 0.35)
+    : new THREE.Vector2(seat.x + fx * 0.72, seat.z + fz * 0.72);
+  let cup;
+  if (cafe) cup = new THREE.Vector3(seat.x + fx * 0.55 + sx * 0.24, 0.8, seat.z + fz * 0.55 + sz * 0.24);
+  else if (Math.hypot(seat.x - 8.4, seat.z + 5.5) < 2.6) cup = new THREE.Vector3(THREE.MathUtils.clamp(seat.x, 7.8, 9.0), 0.46, -5.5);
+  else cup = new THREE.Vector3(seat.x + sx * 0.28, 0.42 + (seat.y || 0), seat.z + sz * 0.28);
+  return { stand, cup };
+}
+function makeServeCup() {
+  const g = new THREE.Group();
+  cyl(0.038, 0.03, 0.075, mat.white, 0, 0.04, 0, g, 12);
+  cyl(0.042, 0.042, 0.012, mat.coral, 0, 0.078, 0, g, 12);
+  return g;
+}
+function clink() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t0 = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(1480, t0);
+    o.frequency.exponentialRampToValueAtTime(880, t0 + 0.08);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.06, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(t0); o.stop(t0 + 0.13);
+  } catch (e) {}
+}
+function dropServeCup(job) {
+  if (job.skipCup || servedCups.has(job.id)) return;
+  while (servedCups.size >= 8) {
+    const oldest = servedCups.keys().next().value;
+    scene.remove(servedCups.get(oldest));
+    servedCups.delete(oldest);
+  }
+  const cup = makeServeCup();
+  cup.position.copy(job.cupAt);
+  scene.add(cup);
+  servedCups.set(job.id, cup);
+  clink();
+}
+function clearMyCups() {
+  for (const [id, cup] of [...servedCups]) {
+    if (!id.startsWith('cof-' + myId + '-')) continue;
+    scene.remove(cup);
+    servedCups.delete(id);
+  }
+}
+function beginCoffee() {
+  const order = serve.queue.shift();
+  if (!order) { serve.active = null; return; }
+  const from = walkerPos();
+  const counter = coffeeNode('counter').p;
+  const targets = serveTargets(order);
+  serve.active = {
+    id: order.id, mine: !!order.mine, skipCup: false,
+    seat: new THREE.Vector2(order.x, order.z), cupAt: targets.cup,
+    phase: 'toCounter', wait: 0,
+    waypoints: coffeeRoute(from, counter),
+    then: coffeeRoute(counter, targets.stand),
+  };
+  walker.mug.visible = false;
+}
+function enqueueCoffee(order) {
+  if (serve.queue.some((q) => q.id === order.id) || (serve.active && serve.active.id === order.id)) return;
+  serve.queue.push(order);
+  if (!serve.active) beginCoffee();
+}
+function cancelMyCoffee() {
+  serve.queue = serve.queue.filter((q) => !q.mine);
+  const job = serve.active;
+  if (job && job.mine && job.phase !== 'return') {
+    job.skipCup = true;
+    job.mine = false;
+    job.phase = 'return';
+    job.wait = 0;
+    job.waypoints = coffeeRoute(walkerPos(), nearestPathPoint(walkerPos()).p);
+    walker.mug.visible = false;
+  }
+  clearMyCups();
+}
+function orderCoffee() {
+  if (!seatedQuiet() || !mySlot) return;
+  const btn = $('btnCoffee');
+  if (btn.disabled) return;
+  const seat = islandOf(myIsland).seats[mySlot - 1];
+  if (!seat) return;
+  const msg = { kind: 'coffee', id: 'cof-' + myId + '-' + Date.now().toString(36), x: seat.x, z: seat.z, yaw: seat.yaw, y: seat.y || 0, name: myName() };
+  seenCoffee.add(msg.id);
+  const ahead = !!(serve.active && !serve.active.mine) || serve.queue.some((q) => !q.mine);
+  enqueueCoffee({ id: msg.id, x: seat.x, z: seat.z, yaw: seat.yaw, y: seat.y || 0, mine: true });
+  btn.disabled = true;
+  btn.textContent = 'Đang mang…';
+  toast(ahead ? 'Phục vụ đang bận, sẽ mang cà phê tới sau.' : 'Đã gọi cà phê. Phục vụ đang mang tới.');
+  if (floorHost) broadcastFloor(msg);
+  else if (floorLink && floorLink.open) { try { floorLink.send(msg); } catch (e) {} }
+}
+function onCoffeeOrder(msg) {
+  if (!msg || !msg.id || seenCoffee.has(msg.id)) return;
+  const x = Number(msg.x), z = Number(msg.z);
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+  seenCoffee.add(msg.id);
+  enqueueCoffee({ id: String(msg.id), x, z, yaw: Number(msg.yaw) || 0, y: Number(msg.y) || 0, mine: false });
+}
+function setWalkerLegs(moving) {
+  const sw = moving ? Math.sin(T.value * 7.5) * 0.45 : 0;
+  walker.legs[0].rotation.x = sw; walker.legs[1].rotation.x = -sw;
+}
+function stepWalker(target, dt) {
+  const pos = walkerPos();
+  const delta = target.clone().sub(pos);
+  const dist = delta.length();
+  const step = 1.25 * dt;
+  if (dist <= Math.max(step, 0.04)) {
+    walker.g.position.set(target.x, 0, target.y);
+    setWalkerLegs(false);
+    return true;
+  }
+  delta.multiplyScalar(step / dist);
+  walker.g.position.x += delta.x;
+  walker.g.position.z += delta.y;
+  walker.g.rotation.y = Math.atan2(delta.x, delta.y);
+  setWalkerLegs(true);
+  return false;
+}
+function faceWalker(x, z, dt) {
+  const yaw = Math.atan2(x - walker.g.position.x, z - walker.g.position.z);
+  let diff = yaw - walker.g.rotation.y;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  walker.g.rotation.y += diff * Math.min(1, dt * 6);
+  setWalkerLegs(false);
+}
+function updatePatrol(dt) {
+  let moving = false;
+  if (walk.pause > 0) walk.pause -= dt;
+  else {
+    walk.d += walk.dir * dt * 1.15; moving = true;
+    if (walk.d >= PATH_LEN) { walk.d = PATH_LEN; walk.dir = -1; walk.pause = 4; }
+    if (walk.d <= 0) { walk.d = 0; walk.dir = 1; walk.pause = 6; }
+  }
+  const step = pathAt(walk.d);
+  walker.g.position.set(step.p.x, 0, step.p.y);
+  walker.g.rotation.y = Math.atan2(step.dir.x * walk.dir, step.dir.y * walk.dir);
+  setWalkerLegs(moving);
+  walker.mug.visible = walk.dir < 0 || walk.d >= PATH_LEN - 0.01;
+}
+function finishServe(job) {
+  if (job.mine && myIsland > 0) {
+    toast('Cà phê đã tới.');
+    const btn = $('btnCoffee');
+    btn.disabled = false;
+    btn.textContent = 'Gọi cà phê';
+  }
+  dropServeCup(job);
+  walker.mug.visible = false;
+  job.phase = 'return';
+  job.waypoints = coffeeRoute(walkerPos(), nearestPathPoint(walkerPos()).p);
+}
+function updateServer(dt) {
+  const job = serve.active;
+  if (!job) { updatePatrol(dt); return; }
+  if (job.wait > 0) {
+    job.wait -= dt;
+    if (job.phase === 'pick') faceWalker(coffeeNode('counter').p.x, coffeeNode('counter').p.y, dt);
+    else if (job.phase === 'serve') faceWalker(job.seat.x, job.seat.y, dt);
+    else setWalkerLegs(false);
+    if (job.wait > 0) return;
+    if (job.phase === 'pick') {
+      walker.mug.visible = true;
+      job.phase = 'toSeat';
+      job.waypoints = job.then;
+    } else if (job.phase === 'serve') finishServe(job);
+  }
+  const wp = job.waypoints[0];
+  if (!wp) {
+    if (job.phase === 'toCounter') { job.phase = 'pick'; job.wait = 0.7; }
+    else if (job.phase === 'toSeat') { job.phase = 'serve'; job.wait = 1.1; }
+    else {
+      const back = nearestPathPoint(walkerPos());
+      walk.d = back.d;
+      walk.pause = 0.4;
+      serve.active = null;
+      beginCoffee();
+    }
+    return;
+  }
+  if (stepWalker(wp, dt)) job.waypoints.shift();
+}
 
 // ---------- zone labels (plan view) ----------
 const ZONES = [
@@ -1949,8 +2227,11 @@ function enterDesk(index, slot) {
   $('btnCam').hidden = quiet;
   $('btnChat').hidden = false;
   $('btnLeave').textContent = quiet ? 'Rời chỗ' : 'Rời bàn';
+  $('btnCoffee').hidden = !quiet;
+  $('btnCoffee').disabled = false;
+  $('btnCoffee').textContent = 'Gọi cà phê';
   $('hint').textContent = quiet
-    ? 'Đang ngồi ' + island.label + ' · chỗ ' + slot + '/' + island.seats.length + ' · ngồi chơi'
+    ? 'Đang ngồi ' + island.label + ' · chỗ ' + slot + '/' + island.seats.length + ' · bấm Gọi cà phê'
     : island.share
       ? 'Đang ở phòng họp · chỗ ' + slot + '/' + island.seats.length + ' · có thể chia sẻ màn hình'
       : 'Đang ngồi ' + island.label + ' (' + island.zone + ') · chỗ ' + slot + '/' + island.seats.length;
@@ -1961,7 +2242,7 @@ function enterDesk(index, slot) {
       ? 'Bạn đã vào phòng họp, chỗ ' + slot + '. Bấm Bật tiếng để nói, hoặc Chia sẻ màn hình để chiếu lên TV.'
       : 'Bạn đã ngồi ' + island.label + ', chỗ ' + slot + '. Bấm Bật tiếng để nói với cả đảo.');
   }
-  toast(quiet ? 'Đã ngồi chơi. Mic và camera tắt. Chat cả phòng vẫn dùng được.' : island.share ? 'Đã vào phòng họp.' : 'Đã ngồi. Bấm Bật tiếng khi muốn nói.', 3200);
+  toast(quiet ? 'Đã ngồi chơi. Bấm Gọi cà phê nếu muốn. Mic và camera tắt.' : island.share ? 'Đã vào phòng họp.' : 'Đã ngồi. Bấm Bật tiếng khi muốn nói.', 3200);
   updateSelf();
   syncControlButtons();
   refreshScreens();
@@ -2009,6 +2290,10 @@ function leaveDesk(silent) {
   closeTvFull();
   $('btnTalk').hidden = false;
   $('btnHear').hidden = true;
+  $('btnCoffee').hidden = true;
+  $('btnCoffee').disabled = false;
+  $('btnCoffee').textContent = 'Gọi cà phê';
+  cancelMyCoffee();
   setConn('on', 'Ngồi cùng đảo là nói chuyện được với đồng nghiệp');
   refreshScreens();
   ring.visible = false;
@@ -2857,6 +3142,11 @@ function onFloorData(msg, from) {
     deliverTap(msg);
     return;
   }
+  if (msg.kind === 'coffee') {
+    if (floorHost && from) broadcastFloor(msg);
+    onCoffeeOrder(msg);
+    return;
+  }
   if (msg.kind === 'log' && Array.isArray(msg.items) && !floorHost) {
     msg.items.forEach((item) => onSay(item, false, true));
     return;
@@ -3225,6 +3515,7 @@ $('btnCam').addEventListener('click', () => {
   });
 });
 $('btnLeave').addEventListener('click', () => leaveDesk(false));
+$('btnCoffee').addEventListener('click', orderCoffee);
 $('btnFish').addEventListener('click', enterFish);
 let menuOpen = true;
 let preferChat = innerWidth > 980;
@@ -3296,6 +3587,7 @@ renderer.setAnimationLoop(() => {
   rackMats.forEach((m, i) => { m.emissiveIntensity = 1.0 + 0.35 * Math.sin(T.value * (5 + i) + i); });
   AQ.update(dt);
   updateAgents(dt, T.value);
+  updateServer(dt);
   for (const b of gulls) {
     b.a += b.speed * dt;
     const ca = Math.cos(b.a), sa = Math.sin(b.a);
@@ -3310,21 +3602,6 @@ renderer.setAnimationLoop(() => {
       w.outer.rotation.z = w.s * (Math.sin(f - 0.7) * amp * 0.8 - (glide ? 0.12 : 0));
     }
   }
-
-  let moving = false;
-  if (walk.pause > 0) walk.pause -= dt;
-  else {
-    walk.d += walk.dir * dt * 1.15; moving = true;
-    if (walk.d >= PATH_LEN) { walk.d = PATH_LEN; walk.dir = -1; walk.pause = 4; }
-    if (walk.d <= 0) { walk.d = 0; walk.dir = 1; walk.pause = 6; }
-  }
-  const step = pathAt(walk.d);
-  walker.g.position.set(step.p.x, 0, step.p.y);
-  const fx = step.dir.x * walk.dir, fz = step.dir.y * walk.dir;
-  walker.g.rotation.y = Math.atan2(fx, fz);
-  const sw = moving ? Math.sin(T.value * 7.5) * 0.45 : 0;
-  walker.legs[0].rotation.x = sw; walker.legs[1].rotation.x = -sw;
-  walker.mug.visible = walk.dir < 0 || (walk.d >= PATH_LEN - 0.01);
 
   if (tween) {
     tween.s = Math.min(1, tween.s + dt / 1.4);
