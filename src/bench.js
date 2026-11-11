@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { islands, G, hooks, renderer } from './world.js';
 import { randomLook } from './avatar.js';
-import { saveGlbFile, clearGlbFile, glbInfo } from './glb-avatar.js';
 
 // ---------- bench driver: chạy kịch bản đo hiệu năng avatar ----------
 // Chỉ được nạp qua main.js khi URL có ?bench. Đi qua upsertSeat/removeSeat
@@ -95,12 +94,6 @@ const api = {
     }
     return true;
   },
-  async loadGlb(url = 'bench/bench-avatar.glb') {
-    const buf = await (await fetch(url)).arrayBuffer();
-    await saveGlbFile(new File([buf], 'bench-avatar.glb', { type: 'model/gltf-binary' }));
-    return glbInfo();
-  },
-  async clearGlb() { await clearGlbFile(); return true; },
   counts() {
     let meshes = 0, sprites = 0, skinned = 0, bodies = 0;
     const geos = new Set(), mats = new Set(), texs = new Set();
@@ -135,39 +128,3 @@ const api = {
   },
 };
 window.__bench = api;
-
-// ---------- ?bench=gen: sinh fixture .glb skinned tại chỗ, xuất base64 ----------
-if (params.get('bench') === 'gen') {
-  (async () => {
-    const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
-    const bones = [];
-    const hips = new THREE.Bone(); hips.name = 'hips'; hips.position.y = 0.9;
-    const spine = new THREE.Bone(); spine.name = 'spine'; spine.position.y = 0.35;
-    const head = new THREE.Bone(); head.name = 'head'; head.position.y = 0.45;
-    hips.add(spine); spine.add(head); bones.push(hips, spine, head);
-    const geo = new THREE.CylinderGeometry(0.22, 0.26, 1.5, 10, 6);
-    geo.translate(0, 0.75, 0);
-    const pos = geo.attributes.position;
-    const si = [], sw = [];
-    for (let i = 0; i < pos.count; i++) {
-      const y = pos.getY(i);
-      const b = y < 0.9 ? 0 : y < 1.25 ? 1 : 2;
-      si.push(b, 0, 0, 0); sw.push(1, 0, 0, 0);
-    }
-    geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
-    geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
-    const mesh = new THREE.SkinnedMesh(geo, new THREE.MeshStandardMaterial({ color: 0x3f8fc0, roughness: 0.7 }));
-    mesh.name = 'body';
-    mesh.add(hips);
-    mesh.bind(new THREE.Skeleton(bones));
-    const root = new THREE.Group();
-    root.add(mesh);
-    const track = new THREE.NumberKeyframeTrack('hips.position[y]', [0, 0.5, 1], [0.9, 0.95, 0.9]);
-    const clip = new THREE.AnimationClip('idle', 1, [track]);
-    const glb = await new Promise((res, rej) => new GLTFExporter().parse(root, res, rej, { binary: true, animations: [clip] }));
-    const u8 = new Uint8Array(glb);
-    let bin = '';
-    for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
-    window.__glbB64 = btoa(bin);
-  })().catch((e) => { window.__glbErr = String(e && e.stack || e); });
-}

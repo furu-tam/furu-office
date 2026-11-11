@@ -27,8 +27,7 @@ renderer.setAnimationLoop(() => {
   for (const person of G.people.children) {
     const av = person.userData.avatar;
     if (!av) continue;
-    if (av.glb) { if (av.mixer) av.mixer.update(dt); }
-    else tickAvatar(av, dt, T.value, REDUCED);
+    tickAvatar(av, dt, T.value, REDUCED);
   }
   for (const b of gulls) {
     b.a += b.speed * dt;

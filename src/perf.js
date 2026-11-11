@@ -8,7 +8,7 @@ const deltas = new Float32Array(CAP); // ms giữa 2 frame (chu kỳ frame)
 const cpus = new Float32Array(CAP);   // ms CPU của thân loop
 let head = 0, len = 0, pending = -1;
 let lastT = 0, t0 = 0;
-const info = { calls: 0, tris: 0, geos: 0, texs: 0, progs: 0, avatars: 0, mixers: 0, bodies: 0 };
+const info = { calls: 0, tris: 0, geos: 0, texs: 0, progs: 0, avatars: 0, bodies: 0 };
 
 export function perfStart() {
   const now = performance.now();
@@ -31,16 +31,8 @@ export function perfEnd() {
   info.geos = i.memory.geometries;
   info.texs = i.memory.textures;
   info.progs = i.programs ? i.programs.length : 0;
-  let bodies = 0, mixers = 0;
-  for (const p of G.people.children) {
-    const av = p.userData.avatar;
-    if (!av) continue;
-    bodies++;
-    if (av.glb && av.mixer) mixers++;
-  }
-  info.bodies = bodies;
-  info.avatars = bodies;
-  info.mixers = mixers;
+  info.bodies = G.people.children.length;
+  info.avatars = info.bodies;
 }
 
 function pct(sorted, q) {
@@ -62,7 +54,7 @@ export function perfStats() {
     cpu: { avg: c.avg, p50: c.p50, p95: c.p95, max: c.max },
     calls: info.calls, triangles: info.tris,
     geometries: info.geos, textures: info.texs, programs: info.progs,
-    avatars: info.avatars, mixers: info.mixers,
+    avatars: info.avatars,
   };
 }
 export function perfReset() { head = 0; len = 0; pending = -1; lastT = 0; }
@@ -80,6 +72,6 @@ if (new URLSearchParams(location.search).has('perf')) {
       `cpu ${s.cpu.avg.toFixed(1)}ms (p95 ${s.cpu.p95.toFixed(1)})\n` +
       `calls ${s.calls}  tris ${(s.triangles / 1000).toFixed(0)}k\n` +
       `geo ${s.geometries}  tex ${s.textures}\n` +
-      `avatars ${s.avatars}  mixers ${s.mixers}`;
+      `avatars ${s.avatars}`;
   }, 500);
 }
