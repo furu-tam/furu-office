@@ -33,6 +33,20 @@
 <div id="uiToggle">
   <button type="button" id="btnMenu" aria-pressed="true">Ẩn menu</button>
   <button type="button" id="btnChatToggle" aria-pressed="false">Hiện chat</button>
+  <button type="button" id="btnSettings" aria-pressed="false" title="Cài đặt" aria-label="Cài đặt">⚙</button>
+</div>
+<div id="settings" hidden>
+  <h3>Cài đặt</h3>
+  <div class="set-row">
+    <b>Nhân vật .glb</b>
+    <p id="glbStatus">Đang dùng nhân vật mặc định.</p>
+    <div class="set-actions">
+      <label class="fileBtn">Chọn file .glb<input id="glbFile" type="file" accept=".glb,model/gltf-binary" hidden></label>
+      <button type="button" id="glbFlip" hidden>Xoay 180°</button>
+      <button type="button" id="glbClear" hidden>Xóa</button>
+    </div>
+    <p class="note">Chỉ mình bạn thấy hình này — người khác vẫn thấy nhân vật từ “Đổi hình”.</p>
+  </div>
 </div>
 <div class="dock" id="dockView" role="group" aria-label="Chế độ xem">
   <button id="v3d" type="button" aria-pressed="true">Phối cảnh 3D</button>

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BODY_ACC, EXCL, ROWS, buildWalker, clampLook, createPreview, disposeAvatar, freshLook, lookSig, normalizeLook, randomLook } from './avatar.js';
+import { clearGlbFile, disposeGlbBody, glbBody, glbFlipped, glbInfo, initGlb, saveGlbFile, setGlbFlip } from './glb-avatar.js';
 import {
   hooks, setCamera, setTween, setFollow, setMyIsland, setHoveredIsland, setWatchingFish, setInSecurity, setFishPose, setSecurityPose, setSecurityBlocked,
   AGENTS, AQ, G, REDUCED, SECURITY_URL, T, boat, box, burndownTex, buttons, camera, cancelMyCoffee, canvas, controls, desk, deskTagsEl, facesEl, fishBtn, fishPose, fishTag, follow, go, gulls, hoveredIsland, inSecurity, islands, labelsEl, meetingTvMat, meetingTvMesh, myIsland, onCoffeeOrder, orderCoffee, ortho, persp, pickers, rackMats, renderer, scene, seaMat, seated, securityBlocked, securityPose, securityTag, tags, tween, updateAgents, updateServer, watchingFish
@@ -278,7 +279,10 @@ function setProp(table, slot, visible) {
   const seat = seatOf(table, slot);
   if (seat && seat.prop) seat.prop.visible = visible;
 }
-function dropBody(g) { disposeAvatar(g); }
+function dropBody(g) {
+  if (g && g.userData.glb) { disposeGlbBody(g); return; }
+  disposeAvatar(g);
+}
 function upsertSeat(info) {
   if (!info || !info.id || (!info.walk && (!info.table || !info.slot))) return;
   const seat = info.walk ? null : seatOf(info.table, info.slot);
@@ -330,11 +334,19 @@ function upsertSeat(info) {
   const sitY = seat.y || 0;
   if (!row.body || row.bodyKind !== 'seat' || (sig && sig !== row.lookSig)) {
     if (row.body) dropBody(row.body);
-    row.body = seated(G.people, seat.x, seat.z, seat.yaw, sitY, look || undefined);
+    const gb = mine ? glbBody() : null;
+    if (gb) {
+      gb.position.set(seat.x, 0, seat.z);
+      gb.rotation.y = seat.yaw;
+      row.body = gb;
+      G.people.add(gb);
+    } else {
+      row.body = seated(G.people, seat.x, seat.z, seat.yaw, sitY, look || undefined);
+    }
     row.bodyKind = 'seat';
     row.lookSig = sig;
   } else {
-    row.body.position.set(seat.x, sitY, seat.z);
+    row.body.position.set(seat.x, row.body.userData.glb ? 0 : sitY, seat.z);
     row.body.rotation.y = seat.yaw;
   }
   row.walk = 0;
@@ -2282,6 +2294,56 @@ applyChrome();
 $('btnMenu').addEventListener('click', toggleMenu);
 $('btnChatToggle').addEventListener('click', toggleChat);
 $('btnChat').addEventListener('click', toggleChat);
+// ---------- settings: nhân vật .glb local-only ----------
+function refreshMyBody() {
+  const row = people.get(myId);
+  if (!row) return;
+  if (row.body) dropBody(row.body);
+  row.body = null; row.lookSig = '';
+  if (myPresence) upsertSeat(myPresence);
+}
+function refreshGlbUI() {
+  const info = glbInfo();
+  $('glbStatus').textContent = info
+    ? 'Đang dùng: ' + info.name + ' — hình này chỉ hiển thị phía bạn.'
+    : 'Đang dùng nhân vật mặc định.';
+  $('glbClear').hidden = !info;
+  $('glbFlip').hidden = !info;
+  $('glbFlip').setAttribute('aria-pressed', String(glbFlipped()));
+}
+$('btnSettings').addEventListener('click', () => {
+  const el = $('settings');
+  el.hidden = !el.hidden;
+  $('btnSettings').setAttribute('aria-pressed', String(!el.hidden));
+});
+$('glbFile').addEventListener('change', async (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  if (f.size > 25 * 1024 * 1024) { toast('File quá lớn — giữ dưới 25MB.'); return; }
+  try {
+    refreshMyBody();
+    const res = await saveGlbFile(f);
+    refreshMyBody();
+    refreshGlbUI();
+    toast(res.persisted
+      ? 'Đã đổi nhân vật — chỉ bạn thấy hình này.'
+      : 'Đã đổi nhân vật cho phiên này — trình duyệt không lưu được file (hết dung lượng).');
+  } catch (err) { refreshMyBody(); toast('Không đọc được file .glb này.'); }
+});
+$('glbClear').addEventListener('click', async () => {
+  refreshMyBody();
+  await clearGlbFile();
+  refreshMyBody();
+  refreshGlbUI();
+  toast('Đã về nhân vật mặc định.');
+});
+$('glbFlip').addEventListener('click', async () => {
+  await setGlbFlip(!glbFlipped());
+  refreshMyBody();
+  refreshGlbUI();
+});
+initGlb().then(refreshGlbUI);
 $('chatForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const v = $('chatInput').value.trim();
@@ -2813,3 +2875,5 @@ hooks.myId = () => myId;
 hooks.mySlot = () => mySlot;
 hooks.isHost = () => floorHost;
 hooks.sendFloor = (msg) => { if (floorLink && floorLink.open) { try { floorLink.send(msg); } catch (e) {} } };
+hooks.upsertSeat = upsertSeat;
+hooks.removeSeat = removeSeat;

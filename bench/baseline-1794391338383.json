@@ -1,0 +1,898 @@
+{
+  "probe": {
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)",
+    "vendor": "Google Inc. (Apple)",
+    "dpr": 1,
+    "size": [
+      1440,
+      900
+    ],
+    "shadowMap": true
+  },
+  "results": [
+    {
+      "frames": 360,
+      "fps": 59.99999840736393,
+      "ms": {
+        "avg": 16.666667109065585,
+        "p50": 16.700000762939453,
+        "p95": 16.799999237060547,
+        "p99": 16.899999618530273,
+        "max": 17.5
+      },
+      "cpu": {
+        "avg": 6.593055560853746,
+        "p50": 6.599999904632568,
+        "p95": 7.400000095367432,
+        "max": 8.199999809265137
+      },
+      "calls": 1501,
+      "triangles": 494302,
+      "geometries": 1404,
+      "textures": 37,
+      "programs": 39,
+      "avatars": 1,
+      "mixers": 0,
+      "counts": {
+        "bodies": 1,
+        "meshes": 42,
+        "skinned": 0,
+        "sprites": 0,
+        "geometries": 42,
+        "materials": 13,
+        "textures": 0
+      },
+      "scenario": "n=1 sit glb=0"
+    },
+    {
+      "frames": 360,
+      "fps": 60.001998958425474,
+      "ms": {
+        "avg": 16.666111418935987,
+        "p50": 16.700000762939453,
+        "p95": 17.399999618530273,
+        "p99": 17.600000381469727,
+        "max": 17.700000762939453
+      },
+      "cpu": {
+        "avg": 6.7808333251211375,
+        "p50": 6.699999809265137,
+        "p95": 7.400000095367432,
+        "max": 8.100000381469727
+      },
+      "calls": 1498,
+      "triangles": 493594,
+      "geometries": 1408,
+      "textures": 38,
+      "programs": 40,
+      "avatars": 2,
+      "mixers": 1,
+      "counts": {
+        "bodies": 2,
+        "meshes": 45,
+        "skinned": 1,
+        "sprites": 0,
+        "geometries": 45,
+        "materials": 14,
+        "textures": 0
+      },
+      "scenario": "n=1 sit glb=1"
+    },
+    {
+      "frames": 360,
+      "fps": 60.00499960594311,
+      "ms": {
+        "avg": 16.66527800295088,
+        "p50": 16.700000762939453,
+        "p95": 17.399999618530273,
+        "p99": 17.600000381469727,
+        "max": 17.600000381469727
+      },
+      "cpu": {
+        "avg": 6.851666653156281,
+        "p50": 6.800000190734863,
+        "p95": 7.699999809265137,
+        "max": 9.199999809265137
+      },
+      "calls": 1501,
+      "triangles": 492486,
+      "geometries": 1405,
+      "textures": 38,
+      "programs": 39,
+      "avatars": 1,
+      "mixers": 0,
+      "counts": {
+        "bodies": 1,
+        "meshes": 41,
+        "skinned": 0,
+        "sprites": 0,
+        "geometries": 41,
+        "materials": 15,
+        "textures": 0
+      },
+      "scenario": "n=1 stand glb=0"
+    },
+    {
+      "frames": 359,
+      "fps": 60.002339652500474,
+      "ms": {
+        "avg": 16.666016788535796,
+        "p50": 16.700000762939453,
+        "p95": 17.5,
+        "p99": 17.600000381469727,
+        "max": 17.700000762939453
+      },
+      "cpu": {
+        "avg": 7.291086356287879,
+        "p50": 7.300000190734863,
+        "p95": 8.199999809265137,
+        "max": 8.800000190734863
+      },
+      "calls": 1506,
+      "triangles": 494146,
+      "geometries": 1404,
+      "textures": 39,
+      "programs": 40,
+      "avatars": 2,
+      "mixers": 1,
+      "counts": {
+        "bodies": 2,
+        "meshes": 39,
+        "skinned": 1,
+        "sprites": 0,
+        "geometries": 39,
+        "materials": 12,
+        "textures": 0
+      },
+      "scenario": "n=1 stand glb=1"
+    },
+    {
+      "frames": 359,
+      "fps": 60.00133673476767,
+      "ms": {
+        "avg": 16.66629535972574,
+        "p50": 16.700000762939453,
+        "p95": 17.5,
+        "p99": 17.600000381469727,
+        "max": 17.799999237060547
+      },
+      "cpu": {
+        "avg": 7.0381615580290475,
+        "p50": 7.099999904632568,
+        "p95": 7.699999809265137,
+        "max": 8.899999618530273
+      },
+      "calls": 1505,
+      "triangles": 494500,
+      "geometries": 1411,
+      "textures": 39,
+      "programs": 39,
+      "avatars": 1,
+      "mixers": 0,
+      "counts": {
+        "bodies": 1,
+        "meshes": 46,
+        "skinned": 0,
+        "sprites": 0,
+        "geometries": 46,
+        "materials": 17,
+        "textures": 0
+      },
+      "scenario": "n=1 mixed glb=0"
+    },
+    {
+      "frames": 359,
+      "fps": 60.00534826253283,
+      "ms": {
+        "avg": 16.66518117059904,
+        "p50": 16.700000762939453,
+        "p95": 17.5,
+        "p99": 17.700000762939453,
+        "max": 17.700000762939453
+      },
+      "cpu": {
+        "avg": 6.961559885391618,
+        "p50": 7,
+        "p95": 7.800000190734863,
+        "max": 8.600000381469727
+      },
+      "calls": 1489,
+      "triangles": 493722,
+      "geometries": 1402,
+      "textures": 40,
+      "programs": 40,
+      "avatars": 2,
+      "mixers": 1,
+      "counts": {
+        "bodies": 2,
+        "meshes": 37,
+        "skinned": 1,
+        "sprites": 0,
+        "geometries": 37,
+        "materials": 14,
+        "textures": 0
+      },
+      "scenario": "n=1 mixed glb=1"
+    },
+    {
+      "frames": 359,
+      "fps": 59.995320458263464,
+      "ms": {
+        "avg": 16.66796664075931,
+        "p50": 16.700000762939453,
+        "p95": 17.5,
+        "p99": 17.700000762939453,
+        "max": 19.700000762939453
+      },
+      "cpu": {
+        "avg": 8.131476330557906,
+        "p50": 8,
+        "p95": 9.600000381469727,
+        "max": 19.399999618530273
+      },
+      "calls": 1680,
+      "triangles": 583088,
+      "geometries": 1577,
+      "textures": 43,
+      "programs": 39,
+      "avatars": 5,
+      "mixers": 0,
+      "counts": {
+        "bodies": 5,
+        "meshes": 212,
+        "skinned": 0,
+        "sprites": 3,
+        "geometries": 212,
+        "materials": 72,
+        "textures": 3
+      },
+      "scenario": "n=5 sit glb=0"
+    },
+    {
+      "frames": 359,
+      "fps": 59.99331534548138,
+      "ms": {
+        "avg": 16.668523722040288,
+        "p50": 16.700000762939453,
+        "p95": 17.5,
+        "p99": 17.700000762939453,
+        "max": 17.799999237060547
+      },
+      "cpu": {
+        "avg": 8.533983290361494,
+        "p50": 8.300000190734863,
+        "p95": 10.699999809265137,
+        "max": 13.300000190734863
+      },
+      "calls": 1707,
+      "triangles": 580946,
+      "geometries": 1609,
+      "textures": 44,
+      "programs": 40,
+      "avatars": 6,
+      "mixers": 1,
+      "counts": {
+        "bodies": 6,
+        "meshes": 244,
+        "skinned": 1,
+        "sprites": 3,
+        "geometries": 244,
+        "materials": 82,
+        "textures": 3
+      },
+      "scenario": "n=5 sit glb=1"
+    },
+    {
+      "frames": 359,
+      "fps": 60.00233988203777,
+      "ms": {
+        "avg": 16.66601672478041,
+        "p50": 16.700000762939453,
+        "p95": 17.399999618530273,
+        "p99": 17.600000381469727,
+        "max": 17.700000762939453
+      },
+      "cpu": {
+        "avg": 7.966016722920878,
+        "p50": 7.900000095367432,
+        "p95": 9.199999809265137,
+        "max": 10.5
+      },
+      "calls": 1687,
+      "triangles": 572584,
+      "geometries": 1589,
+      "textures": 44,
+      "programs": 39,
+      "avatars": 5,
+      "mixers": 0,
+      "counts": {
+        "bodies": 5,
+        "meshes": 224,
+        "skinned": 0,
+        "sprites": 3,
+        "geometries": 224,
+        "materials": 79,
+        "textures": 3
+      },
+      "scenario": "n=5 stand glb=0"
+    },
+    {
+      "frames": 358,
+      "fps": 59.83120243532416,
+      "ms": {
+        "avg": 16.713687161493567,
+        "p50": 16.700000762939453,
+        "p95": 17.5,
+        "p99": 17.700000762939453,
+        "max": 25.299999237060547
+      },
+      "cpu": {
+        "avg": 9.008659246913547,
+        "p50": 8.600000381469727,
+        "p95": 11.300000190734863,
+        "max": 22
+      },
+      "calls": 1795,
+      "triangles": 589614,
+      "geometries": 1694,
+      "textures": 42,
+      "programs": 40,
+      "avatars": 6,
+      "mixers": 1,
+      "counts": {
+        "bodies": 6,
+        "meshes": 329,
+        "skinned": 1,
+        "sprites": 0,
+        "geometries": 329,
+        "materials": 73,
+        "textures": 0
+      },
+      "scenario": "n=5 stand glb=1"
+    },
+    {
+      "frames": 359,
+      "fps": 60.00033428091478,
+      "ms": {
+        "avg": 16.666573811374334,
+        "p50": 16.700000762939453,
+        "p95": 17.5,
+        "p99": 17.600000381469727,
+        "max": 17.799999237060547
+      },
+      "cpu": {
+        "avg": 8.323119773174064,
+        "p50": 8.199999809265137,
+        "p95": 10.199999809265137,
+        "max": 12.300000190734863
+      },
+      "calls": 1671,
+      "triangles": 575786,
+      "geometries": 1584,
+      "textures": 42,
+      "programs": 39,
+      "avatars": 5,
+      "mixers": 0,
+      "counts": {
+        "bodies": 5,
+        "meshes": 219,
+        "skinned": 0,
+        "sprites": 0,
+        "geometries": 219,
+        "materials": 74,
+        "textures": 0
+      },
+      "scenario": "n=5 mixed glb=0"
+    },
+    {
+      "frames": 359,
+      "fps": 60.00033412790015,
+      "ms": {
+        "avg": 16.666573853877924,
+        "p50": 16.700000762939453,
+        "p95": 17.5,
+        "p99": 17.600000381469727,
+        "max": 29.299999237060547
+      },
+      "cpu": {
+        "avg": 8.241782735649258,
+        "p50": 8.199999809265137,
+        "p95": 9.300000190734863,
+        "max": 13.800000190734863
+      },
+      "calls": 1685,
+      "triangles": 579250,
+      "geometries": 1590,
+      "textures": 43,
+      "programs": 40,
+      "avatars": 6,
+      "mixers": 1,
+      "counts": {
+        "bodies": 6,
+        "meshes": 225,
+        "skinned": 1,
+        "sprites": 0,
+        "geometries": 225,
+        "materials": 71,
+        "textures": 0
+      },
+      "scenario": "n=5 mixed glb=1"
+    },
+    {
+      "frames": 360,
+      "fps": 60.01000145706619,
+      "ms": {
+        "avg": 16.663888947168985,
+        "p50": 16.700000762939453,
+        "p95": 17.399999618530273,
+        "p99": 17.600000381469727,
+        "max": 17.700000762939453
+      },
+      "cpu": {
+        "avg": 9.368611113230388,
+        "p50": 9.199999809265137,
+        "p95": 11,
+        "max": 12.399999618530273
+      },
+      "calls": 1890,
+      "triangles": 679026,
+      "geometries": 1789,
+      "textures": 49,
+      "programs": 39,
+      "avatars": 10,
+      "mixers": 0,
+      "counts": {
+        "bodies": 10,
+        "meshes": 424,
+        "skinned": 0,
+        "sprites": 6,
+        "geometries": 424,
+        "materials": 153,
+        "textures": 6
+      },
+      "scenario": "n=10 sit glb=0"
+    },
+    {
+      "frames": 360,
+      "fps": 59.99999906539919,
+      "ms": {
+        "avg": 16.66666692627801,
+        "p50": 16.700000762939453,
+        "p95": 17.100000381469727,
+        "p99": 17.5,
+        "max": 17.600000381469727
+      },
+      "cpu": {
+        "avg": 9.53222221798367,
+        "p50": 9.300000190734863,
+        "p95": 11.100000381469727,
+        "max": 14.699999809265137
+      },
+      "calls": 1933,
+      "triangles": 678993,
+      "geometries": 1830,
+      "textures": 56,
+      "programs": 40,
+      "avatars": 11,
+      "mixers": 1,
+      "counts": {
+        "bodies": 11,
+        "meshes": 465,
+        "skinned": 1,
+        "sprites": 12,
+        "geometries": 465,
+        "materials": 151,
+        "textures": 12
+      },
+      "scenario": "n=10 sit glb=1"
+    },
+    {
+      "frames": 355,
+      "fps": 59.29513928939088,
+      "ms": {
+        "avg": 16.86478878343609,
+        "p50": 16.700000762939453,
+        "p95": 19.200000762939453,
+        "p99": 21.600000381469727,
+        "max": 24.299999237060547
+      },
+      "cpu": {
+        "avg": 16.45549297870045,
+        "p50": 16.299999237060547,
+        "p95": 18.799999237060547,
+        "max": 24
+      },
+      "calls": 1994,
+      "triangles": 674990,
+      "geometries": 1901,
+      "textures": 50,
+      "programs": 39,
+      "avatars": 10,
+      "mixers": 0,
+      "counts": {
+        "bodies": 10,
+        "meshes": 536,
+        "skinned": 0,
+        "sprites": 6,
+        "geometries": 536,
+        "materials": 149,
+        "textures": 6
+      },
+      "scenario": "n=10 stand glb=0"
+    },
+    {
+      "frames": 359,
+      "fps": 59.96725927447621,
+      "ms": {
+        "avg": 16.675766278110174,
+        "p50": 16.700000762939453,
+        "p95": 17,
+        "p99": 19.5,
+        "max": 21.799999237060547
+      },
+      "cpu": {
+        "avg": 11.010027820353388,
+        "p50": 9.699999809265137,
+        "p95": 16.600000381469727,
+        "max": 21.5
+      },
+      "calls": 1904,
+      "triangles": 673202,
+      "geometries": 1793,
+      "textures": 48,
+      "programs": 40,
+      "avatars": 11,
+      "mixers": 1,
+      "counts": {
+        "bodies": 11,
+        "meshes": 428,
+        "skinned": 1,
+        "sprites": 3,
+        "geometries": 428,
+        "materials": 149,
+        "textures": 3
+      },
+      "scenario": "n=10 stand glb=1"
+    },
+    {
+      "frames": 343,
+      "fps": 57.14952177198365,
+      "ms": {
+        "avg": 17.497959195351115,
+        "p50": 17.200000762939453,
+        "p95": 19.600000381469727,
+        "p99": 21.700000762939453,
+        "max": 24.700000762939453
+      },
+      "cpu": {
+        "avg": 17.15481044669193,
+        "p50": 16.799999237060547,
+        "p95": 19.299999237060547,
+        "max": 24.399999618530273
+      },
+      "calls": 2217,
+      "triangles": 715297,
+      "geometries": 2111,
+      "textures": 54,
+      "programs": 39,
+      "avatars": 10,
+      "mixers": 0,
+      "counts": {
+        "bodies": 10,
+        "meshes": 746,
+        "skinned": 0,
+        "sprites": 9,
+        "geometries": 746,
+        "materials": 151,
+        "textures": 9
+      },
+      "scenario": "n=10 mixed glb=0"
+    },
+    {
+      "frames": 337,
+      "fps": 56.31496263827642,
+      "ms": {
+        "avg": 17.757270060236447,
+        "p50": 17.5,
+        "p95": 19.899999618530273,
+        "p99": 22.700000762939453,
+        "max": 25.200000762939453
+      },
+      "cpu": {
+        "avg": 17.396142441724102,
+        "p50": 17.100000381469727,
+        "p95": 19.5,
+        "max": 24.100000381469727
+      },
+      "calls": 2202,
+      "triangles": 709654,
+      "geometries": 2108,
+      "textures": 52,
+      "programs": 40,
+      "avatars": 11,
+      "mixers": 1,
+      "counts": {
+        "bodies": 11,
+        "meshes": 743,
+        "skinned": 1,
+        "sprites": 6,
+        "geometries": 743,
+        "materials": 150,
+        "textures": 6
+      },
+      "scenario": "n=10 mixed glb=1"
+    },
+    {
+      "frames": 256,
+      "fps": 42.72648372758643,
+      "ms": {
+        "avg": 23.404687508940697,
+        "p50": 23.299999237060547,
+        "p95": 28.100000381469727,
+        "p99": 29,
+        "max": 30.600000381469727
+      },
+      "cpu": {
+        "avg": 22.99726562947035,
+        "p50": 22.799999237060547,
+        "p95": 27.600000381469727,
+        "max": 28.700000762939453
+      },
+      "calls": 2336,
+      "triangles": 882098,
+      "geometries": 2242,
+      "textures": 52,
+      "programs": 39,
+      "avatars": 20,
+      "mixers": 0,
+      "counts": {
+        "bodies": 20,
+        "meshes": 877,
+        "skinned": 0,
+        "sprites": 6,
+        "geometries": 877,
+        "materials": 289,
+        "textures": 6
+      },
+      "scenario": "n=20 sit glb=0"
+    },
+    {
+      "frames": 235,
+      "fps": 39.18364617442994,
+      "ms": {
+        "avg": 25.520851110904776,
+        "p50": 25.399999618530273,
+        "p95": 29.299999237060547,
+        "p99": 31.100000381469727,
+        "max": 34.400001525878906
+      },
+      "cpu": {
+        "avg": 25.131489319496968,
+        "p50": 25,
+        "p95": 29,
+        "max": 33.900001525878906
+      },
+      "calls": 2466,
+      "triangles": 898518,
+      "geometries": 2360,
+      "textures": 59,
+      "programs": 40,
+      "avatars": 21,
+      "mixers": 1,
+      "counts": {
+        "bodies": 21,
+        "meshes": 995,
+        "skinned": 1,
+        "sprites": 12,
+        "geometries": 995,
+        "materials": 312,
+        "textures": 12
+      },
+      "scenario": "n=20 sit glb=1"
+    },
+    {
+      "frames": 260,
+      "fps": 43.36079508200084,
+      "ms": {
+        "avg": 23.06230773925781,
+        "p50": 22.399999618530273,
+        "p95": 27.799999237060547,
+        "p99": 30,
+        "max": 34.599998474121094
+      },
+      "cpu": {
+        "avg": 22.659999972123366,
+        "p50": 22.100000381469727,
+        "p95": 27.399999618530273,
+        "max": 34.099998474121094
+      },
+      "calls": 2348,
+      "triangles": 868880,
+      "geometries": 2255,
+      "textures": 53,
+      "programs": 39,
+      "avatars": 20,
+      "mixers": 0,
+      "counts": {
+        "bodies": 20,
+        "meshes": 890,
+        "skinned": 0,
+        "sprites": 6,
+        "geometries": 890,
+        "materials": 302,
+        "textures": 6
+      },
+      "scenario": "n=20 stand glb=0"
+    },
+    {
+      "frames": 238,
+      "fps": 39.65212756079075,
+      "ms": {
+        "avg": 25.219327726283996,
+        "p50": 25.100000381469727,
+        "p95": 28.600000381469727,
+        "p99": 29.700000762939453,
+        "max": 30.600000381469727
+      },
+      "cpu": {
+        "avg": 24.83529411444143,
+        "p50": 24.700000762939453,
+        "p95": 28.299999237060547,
+        "max": 30.200000762939453
+      },
+      "calls": 2492,
+      "triangles": 885556,
+      "geometries": 2388,
+      "textures": 57,
+      "programs": 40,
+      "avatars": 21,
+      "mixers": 1,
+      "counts": {
+        "bodies": 21,
+        "meshes": 1023,
+        "skinned": 1,
+        "sprites": 9,
+        "geometries": 1023,
+        "materials": 303,
+        "textures": 9
+      },
+      "scenario": "n=20 stand glb=1"
+    },
+    {
+      "frames": 237,
+      "fps": 39.592382300885205,
+      "ms": {
+        "avg": 25.25738391795742,
+        "p50": 25.100000381469727,
+        "p95": 29.399999618530273,
+        "p99": 31.899999618530273,
+        "max": 36.099998474121094
+      },
+      "cpu": {
+        "avg": 24.905063299187127,
+        "p50": 24.799999237060547,
+        "p95": 29,
+        "max": 35.79999923706055
+      },
+      "calls": 2543,
+      "triangles": 895467,
+      "geometries": 2442,
+      "textures": 60,
+      "programs": 39,
+      "avatars": 20,
+      "mixers": 0,
+      "counts": {
+        "bodies": 20,
+        "meshes": 1077,
+        "skinned": 0,
+        "sprites": 12,
+        "geometries": 1077,
+        "materials": 304,
+        "textures": 12
+      },
+      "scenario": "n=20 mixed glb=0"
+    },
+    {
+      "frames": 241,
+      "fps": 40.27002647553589,
+      "ms": {
+        "avg": 24.83236509932522,
+        "p50": 24.700000762939453,
+        "p95": 29.100000381469727,
+        "p99": 30.799999237060547,
+        "max": 33
+      },
+      "cpu": {
+        "avg": 24.45601665132768,
+        "p50": 24.299999237060547,
+        "p95": 28.700000762939453,
+        "max": 32.5
+      },
+      "calls": 2434,
+      "triangles": 895539,
+      "geometries": 2332,
+      "textures": 49,
+      "programs": 40,
+      "avatars": 21,
+      "mixers": 1,
+      "counts": {
+        "bodies": 21,
+        "meshes": 967,
+        "skinned": 1,
+        "sprites": 0,
+        "geometries": 967,
+        "materials": 277,
+        "textures": 0
+      },
+      "scenario": "n=20 mixed glb=1"
+    },
+    {
+      "frames": 343,
+      "fps": 57.12287217956805,
+      "ms": {
+        "avg": 17.506122536283886,
+        "p50": 17.100000381469727,
+        "p95": 20.299999237060547,
+        "p99": 24,
+        "max": 27.600000381469727
+      },
+      "cpu": {
+        "avg": 16.641982459465893,
+        "p50": 16.5,
+        "p95": 19.399999618530273,
+        "max": 26.899999618530273
+      },
+      "calls": 2054,
+      "triangles": 717566,
+      "geometries": 1964,
+      "textures": 52,
+      "programs": 39,
+      "avatars": 11,
+      "mixers": 0,
+      "counts": {
+        "bodies": 11,
+        "meshes": 599,
+        "skinned": 0,
+        "sprites": 3,
+        "geometries": 599,
+        "materials": 169,
+        "textures": 3
+      },
+      "scenario": "churn seated (10 present)"
+    },
+    {
+      "frames": 335,
+      "fps": 55.90694418405205,
+      "ms": {
+        "avg": 17.88686565854656,
+        "p50": 17.299999237060547,
+        "p95": 21.200000762939453,
+        "p99": 23,
+        "max": 25.799999237060547
+      },
+      "cpu": {
+        "avg": 17.290149275936297,
+        "p50": 16.799999237060547,
+        "p95": 20.700000762939453,
+        "max": 25.5
+      },
+      "calls": 2175,
+      "triangles": 728932,
+      "geometries": 2085,
+      "textures": 52,
+      "programs": 39,
+      "avatars": 11,
+      "mixers": 0,
+      "counts": {
+        "bodies": 11,
+        "meshes": 720,
+        "skinned": 0,
+        "sprites": 3,
+        "geometries": 720,
+        "materials": 178,
+        "textures": 3
+      },
+      "scenario": "churn walk (10 present)"
+    }
+  ]
+}

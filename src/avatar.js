@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const SHIRT = ['#169e8f', '#ff7a55', '#2f63ad', '#f5b544', '#e3ecef', '#7a4fc2', '#26333a', '#e0465e'];
-const SHIRT_N = ['Xanh ngọc', 'Cam', 'Xanh dương', 'Vàng', 'Trắng', 'Tím', 'Than', 'Đỏ hồng'];
+const SHIRT = ['#169e8f', '#ff7a55', '#2f63ad', '#f5b544', '#e3ecef', '#7a4fc2', '#26333a', '#e0465e', '#1f2d4f'];
+const SHIRT_N = ['Xanh ngọc', 'Cam', 'Xanh dương', 'Vàng', 'Trắng', 'Tím', 'Than', 'Đỏ hồng', 'Xanh navy'];
 const SKIN = ['#f5c9a3', '#dca07a', '#b9744f', '#8a5638', '#5e3a26'];
 const SKIN_N = ['Sáng', 'Trung bình sáng', 'Ngăm', 'Nâu', 'Nâu đậm'];
 const HAIR = ['#1c1714', '#3d2418', '#141010', '#8a5a2b', '#d9b26a', '#b8462e', '#9aa3ab', '#3f6fd1'];
@@ -19,14 +20,14 @@ export const ROWS = [
   { key: 'hair', label: 'Kiểu tóc', type: 'seg', focus: 'face', opts: [['ngan', 'Ngắn'], ['dinh', 'Đầu đinh'], ['lech', 'Mái lệch'], ['xoan', 'Xoăn'], ['dai', 'Dài'], ['duoi', 'Đuôi ngựa'], ['bui', 'Búi'], ['hoi', 'Hói'], ['troc', 'Trọc']] },
   { key: 'hairColor', label: 'Màu tóc', type: 'swatch', focus: 'face', colors: HAIR, names: HAIR_N },
   { key: 'skin', label: 'Da', type: 'swatch', focus: 'face', colors: SKIN, names: SKIN_N },
-  { key: 'top', label: 'Kiểu áo', type: 'seg', focus: 'full', opts: [['thun', 'Áo thun'], ['hoodie', 'Hoodie'], ['vest', 'Vest']] },
+  { key: 'top', label: 'Kiểu áo', type: 'seg', focus: 'full', opts: [['thun', 'Áo thun'], ['polo', 'Polo'], ['hoodie', 'Hoodie'], ['vest', 'Vest']] },
   { key: 'shirt', label: 'Áo', type: 'swatch', focus: 'full', colors: SHIRT, names: SHIRT_N },
   { key: 'pants', label: 'Quần', type: 'swatch', focus: 'full', colors: PANTS, names: PANTS_N },
-  { key: 'acc', label: 'Phụ kiện', type: 'multi', focus: 'face', opts: [['tainghe', 'Tai nghe'], ['kinhram', 'Kính râm'], ['kinhcan', 'Kính cận'], ['luoitrai', 'Mũ lưỡi trai'], ['len', 'Mũ len'], ['caphe', 'Ly cà phê'], ['dongho', 'Đồng hồ'], ['bongtai', 'Bông tai']] },
+  { key: 'acc', label: 'Phụ kiện', type: 'multi', focus: 'face', opts: [['tainghe', 'Tai nghe'], ['kinhram', 'Kính râm'], ['kinhcan', 'Kính cận'], ['luoitrai', 'Mũ lưỡi trai'], ['len', 'Mũ len'], ['caphe', 'Ly cà phê'], ['dongho', 'Đồng hồ'], ['bongtai', 'Bông tai'], ['tuixeo', 'Túi đeo']] },
   { key: 'accColor', label: 'Màu phụ kiện', type: 'swatch', focus: 'face', colors: ACC, names: ACC_N },
 ];
 export const EXCL = [['kinhram', 'kinhcan'], ['luoitrai', 'len']];
-export const BODY_ACC = new Set(['caphe', 'dongho']);
+export const BODY_ACC = new Set(['caphe', 'dongho', 'tuixeo']);
 
 export function freshLook() {
   return { v: 2, gender: 'nam', face: 'hien', hair: 'ngan', hairColor: 1, skin: 2, top: 'thun', shirt: 2, pants: 0, acc: [], accColor: 1 };
@@ -108,6 +109,51 @@ function mk(geo, material, parent, x = 0, y = 0, z = 0) {
   mesh.receiveShadow = true;
   parent.add(mesh);
   return mesh;
+}
+// Gộp các mesh anh em cùng material trong mỗi group -> ít draw call hơn mà
+// vẫn giữ khớp nối (chỉ merge trong cùng parent; torso/head/legs/blink vẫn
+// là group riêng animate được). Mesh nhỏ hơn SHADOW_MIN_R không đổ bóng.
+const SHADOW_MIN_R = 0.07;
+function mergeSiblingMeshes(group) {
+  const buckets = new Map();
+  for (const child of group.children) {
+    if (!child.isMesh || child.isSkinnedMesh || Array.isArray(child.material)) continue;
+    const key = child.material.uuid + '|' + (child.castShadow ? 1 : 0) + (child.receiveShadow ? 2 : 0);
+    let b = buckets.get(key);
+    if (!b) buckets.set(key, b = { m: child.material, cast: child.castShadow, recv: child.receiveShadow, list: [] });
+    b.list.push(child);
+  }
+  for (const b of buckets.values()) {
+    if (b.list.length < 2) continue;
+    const geos = [];
+    for (const mesh of b.list) {
+      mesh.updateMatrix();
+      const g = mesh.geometry.clone().applyMatrix4(mesh.matrix);
+      geos.push(g);
+    }
+    const merged = mergeGeometries(geos, false);
+    geos.forEach((g) => g.dispose());
+    if (!merged) continue;
+    const out = new THREE.Mesh(merged, b.m);
+    out.castShadow = b.cast;
+    out.receiveShadow = b.recv;
+    for (const mesh of b.list) {
+      group.remove(mesh);
+      mesh.geometry.dispose();
+    }
+    group.add(out);
+  }
+}
+function optimizeAvatar(root) {
+  if (new URLSearchParams(location.search).has('nomerge')) return; // A/B benchmark
+  root.traverse((n) => {
+    if (!n.isMesh || !n.castShadow) return;
+    if (!n.geometry.boundingSphere) n.geometry.computeBoundingSphere();
+    if (n.geometry.boundingSphere.radius * Math.max(n.scale.x, n.scale.y, n.scale.z) < SHADOW_MIN_R) n.castShadow = false;
+  });
+  const nodes = [];
+  root.traverse((n) => { if (!n.isMesh && !n.isSprite) nodes.push(n); });
+  for (const g of nodes) mergeSiblingMeshes(g);
 }
 const fz = (x, y) => 0.96 * R * Math.sqrt(Math.max(0, 1 - (x / R) ** 2 - (y / (1.02 * R)) ** 2));
 function place(obj, x, y, off = 0.003) {
@@ -199,6 +245,14 @@ export function buildCharacter(look, stance = 'seat') {
   mk(new THREE.CylinderGeometry(0.068, 0.075, 0.16, 18), M.skin, torso, 0, 0.6, 0);
   if (S.top === 'thun') {
     mk(new THREE.TorusGeometry(0.082, 0.018, 8, 24), M.shirtD, torso, 0, 0.56, 0).rotation.x = Math.PI / 2;
+  } else if (S.top === 'polo') {
+    mk(new THREE.CylinderGeometry(0.085, 0.093, 0.05, 20), M.shirtD, torso, 0, 0.55, 0);                    // cổ áo đứng
+    mk(new THREE.BoxGeometry(0.045, 0.15, 0.014), M.shirtD, torso, 0, 0.45, 0.175);                         // lược áo
+    for (const s of [-1, 1]) {
+      const flap = mk(new THREE.BoxGeometry(0.075, 0.06, 0.014), M.shirtD, torso, s * 0.058, 0.53, 0.16);   // 2 ve cổ
+      flap.rotation.set(0.18, s * 0.3, s * 0.45);
+    }
+    for (const y of [0.47, 0.41]) mk(new THREE.SphereGeometry(0.009, 8, 6), M.white, torso, 0, y, 0.185);   // cúc
   } else if (S.top === 'hoodie') {
     const hood = mk(new THREE.TorusGeometry(0.15, 0.06, 10, 28), M.shirt, torso, 0, 0.56, -0.03);
     hood.rotation.x = Math.PI / 2;
@@ -226,8 +280,9 @@ export function buildCharacter(look, stance = 'seat') {
     shoulder.position.set(s * (0.2 * sx + 0.045), 0.5, 0);
     torso.add(shoulder);
     const sleeve = S.top === 'vest' ? M.jacket : M.shirt;
+    const shortSleeve = S.top === 'thun' || S.top === 'polo';
     mk(new THREE.SphereGeometry(0.076, 16, 12), sleeve, shoulder);
-    if (S.top === 'thun') {
+    if (shortSleeve) {
       mk(new THREE.CapsuleGeometry(0.079, 0.08, 6, 14), sleeve, shoulder, 0, -0.06, 0);
       mk(new THREE.CapsuleGeometry(0.064, 0.2, 6, 14), M.skin, shoulder, 0, -0.16, 0);
     } else mk(new THREE.CapsuleGeometry(0.072, 0.2, 6, 14), sleeve, shoulder, 0, -0.15, 0);
@@ -235,8 +290,8 @@ export function buildCharacter(look, stance = 'seat') {
     elbow.position.y = -0.3;
     elbow.rotation.set(0.25, -s * 0.3, 0);
     shoulder.add(elbow);
-    mk(new THREE.CapsuleGeometry(0.062, 0.18, 6, 14), S.top === 'thun' ? M.skin : sleeve, elbow, 0, 0, 0.11).rotation.x = Math.PI / 2;
-    if (S.top !== 'thun') mk(new THREE.CylinderGeometry(0.066, 0.066, 0.03, 16), M.shirtD, elbow, 0, 0, 0.2).rotation.x = Math.PI / 2;
+    mk(new THREE.CapsuleGeometry(0.062, 0.18, 6, 14), shortSleeve ? M.skin : sleeve, elbow, 0, 0, 0.11).rotation.x = Math.PI / 2;
+    if (!shortSleeve) mk(new THREE.CylinderGeometry(0.066, 0.066, 0.03, 16), M.shirtD, elbow, 0, 0, 0.2).rotation.x = Math.PI / 2;
     mk(new THREE.SphereGeometry(0.068, 16, 12), M.skin, elbow, 0, 0, 0.26).scale.set(0.9, 0.8, 1.1);
     if (s < 0 && has('caphe')) {
       const cup = new THREE.Group();
@@ -250,6 +305,13 @@ export function buildCharacter(look, stance = 'seat') {
       mk(new THREE.TorusGeometry(0.066, 0.014, 8, 22), M.black, elbow, 0, 0, 0.2);
       mk(new THREE.BoxGeometry(0.04, 0.014, 0.045), M.glow, elbow, 0, 0.072, 0.2);
     }
+  }
+
+  if (has('tuixeo')) {
+    const strap = mk(new THREE.BoxGeometry(0.055, 0.68, 0.016), M.acc, torso, -0.02, 0.24, 0.155);
+    strap.rotation.z = 0.55; strap.rotation.y = -0.1;
+    mk(new THREE.BoxGeometry(0.21, 0.15, 0.08), M.acc, torso, -0.26, -0.04, 0.1).rotation.y = 0.35;
+    mk(new THREE.BoxGeometry(0.21, 0.05, 0.081), M.accSoft, torso, -0.26, 0.02, 0.1).rotation.y = 0.35;
   }
 
   const head = new THREE.Group();
@@ -432,6 +494,8 @@ export function buildCharacter(look, stance = 'seat') {
     const visor = mk(new THREE.CylinderGeometry(0.16, 0.16, 0.014, 32, 1, false, -P / 2, P), M.acc, head, 0, radius * 1.02 * Math.cos(theta) - 0.004, 0.12);
     visor.rotation.x = 0.15;
     mk(new THREE.SphereGeometry(0.02, 10, 8), M.acc, head, 0, radius * 1.02 + 0.005, 0);
+    const logo = mk(new THREE.SphereGeometry(0.028, 12, 8), M.gold, head, 0, radius * 0.72, radius * 0.66);
+    logo.scale.set(1.15, 0.75, 0.3);
   }
   if (has('len')) {
     const radius = R * 1.1;
@@ -477,6 +541,7 @@ export function buildCharacter(look, stance = 'seat') {
   if (has('kinhram')) glasses(true);
   if (has('kinhcan')) glasses(false);
   if (has('bongtai')) for (const s of [-1, 1]) mk(new THREE.SphereGeometry(0.016, 12, 10), M.gold, head, s * 0.222, -0.066, -0.005);
+  optimizeAvatar(root);
   return out;
 }
 
