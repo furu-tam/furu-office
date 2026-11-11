@@ -360,12 +360,13 @@ export function bootWolf(onChange) {
       else promptHtml = "🧙 <b>Phù thủy thức dậy.</b> Đêm nay sói nhắm vào <b>"+(night.wolfTarget>=0?esc(slots[night.wolfTarget].name):"—")+"</b>. Dùng thuốc cứu, thuốc độc (mở độc rồi bấm chọn người), hoặc bỏ qua.";
       try{ slots[remoteSeat].netConn.send({type:"prompt", kind:(r==="witch"?"witch":"night"), role:r, html:promptHtml, potions:{save:witchPotions.save, kill:witchPotions.kill}}); }catch(e){}
       setAction("📡 Đang chờ <b>"+esc(slots[remoteSeat].name)+"</b> ("+ROLES[r].name+") hành động trong đêm…","");
-      stopTimer(); $("timer").textContent="⏳";
-      startTimer(45, function(){ if (net.waitingSeat===remoteSeat){ net.waitingSeat=-1; nightStep++; runNightStep(); } });
-      return;
     }
-    if (!humanActs){ startTimer(4, function(){ nightStep++; runNightStep(); }); }
-    else { stopTimer(); $("timer").textContent="⏳"; }
+    startTimer(30, function(){
+      if (currentNightRole()!==r) return;
+      net.waitingSeat=-1;
+      nightStep++;
+      runNightStep();
+    });
   }
 
   function resolveNight(){
@@ -488,9 +489,11 @@ export function bootWolf(onChange) {
       return;
     }
     if (hunterIdx===mySeat){
-      setAction("🏹 <b>Bạn là Thợ Săn và vừa gục ngã!</b> Bấm vào 1 người còn sống để bắn theo trước khi nhắm mắt.","");
+      setAction("🏹 <b>Bạn là Thợ Săn và vừa gục ngã!</b> Bấm vào 1 người còn sống để bắn theo trước khi nhắm mắt.","Lượt này dừng 30 giây.");
       setPhaseUI("Thợ săn rút súng!","Thợ săn được bắn theo 1 người bất kỳ.","🏹","Phát súng cuối cùng","Thợ săn",false);
-      render(); return; // wait for click, handled in onSeatClick -> finishHunter
+      render();
+      startTimer(30, function(){ if (phase==="hunter" && hunterSeat===hunterIdx){ var pool=aliveSeats(); if(pool.length){ finishHunter(botPick(pool), hunterIdx); } } });
+      return;
     }
     var pool=aliveSeats(); if (!pool.length){ done(); return; }
     var target=botPick(pool);
@@ -562,29 +565,22 @@ export function bootWolf(onChange) {
       if (!isDecider) return;
       if (r==="wolf" && slots[actor].role==="wolf" && slots[idx].role!=="wolf"){
         night.wolfTarget=idx; if (actor===mySeat) selected=idx; refreshTargets();
-        if (actor===mySeat) setAction("🐺 Bầy sói sẽ tấn công <b>"+esc(s.name)+"</b> đêm nay.","Đang chốt mục tiêu…");
-        net.waitingSeat=-1; stopTimer();
-        startTimer(2, function(){ nightStep++; runNightStep(); });
+        if (actor===mySeat) setAction("🐺 Bầy sói sẽ tấn công <b>"+esc(s.name)+"</b> đêm nay.","Còn đổi được cho tới khi hết 30 giây.");
       }
       if (r==="guard" && slots[actor].role==="guard"){
         if (idx===lastGuard){ if (actor===mySeat) sysLog("Không che cùng 1 người 2 đêm liền — chọn người khác nhé."); else sendPrivate(actor, "🛡️ Không che cùng 1 người 2 đêm liền — chọn người khác nhé."); return; }
         night.guardTarget=idx; if (actor===mySeat) selected=idx; refreshTargets();
-        net.waitingSeat=-1; stopTimer();
-        startTimer(1, function(){ nightStep++; runNightStep(); });
+        if (actor===mySeat) setAction("🛡️ Bạn sẽ che <b>"+esc(s.name)+"</b> đêm nay.","Còn đổi được cho tới khi hết 30 giây.");
       }
       if (r==="seer" && slots[actor].role==="seer" && idx!==actor){
         night.seerTarget=idx;
         var isWolf=slots[idx].role==="wolf";
         var msg="🔮 "+(actor===mySeat?"Bạn soi":"Kết quả soi:")+" <b>"+esc(s.name)+"</b>: người này <b>"+(isWolf?"LÀ MA SÓI 🐺":"không phải Sói ✅")+"</b>.";
         if (actor===mySeat) logLocal(msg,"night"); else sendPrivate(actor, msg);
-        net.waitingSeat=-1; stopTimer();
-        startTimer(2, function(){ nightStep++; runNightStep(); });
       }
       if (r==="witch" && slots[actor].role==="witch" && witchArmSeat===actor){
         night.witchPoison=idx; witchArmSeat=-1; witchPoisonArmed=false; showWitch(false);
-        if (actor===mySeat) setAction("☠️ Phù thủy sẽ rải thuốc độc lên <b>"+esc(s.name)+"</b> đêm nay.","");
-        net.waitingSeat=-1; stopTimer();
-        startTimer(2, function(){ nightStep++; runNightStep(); });
+        if (actor===mySeat) setAction("☠️ Phù thủy sẽ rải thuốc độc lên <b>"+esc(s.name)+"</b> đêm nay.","Còn đổi được cho tới khi hết 30 giây.");
       }
     }
   }
@@ -618,8 +614,7 @@ export function bootWolf(onChange) {
     if (net.mode==="guest"){ guestWitchAct("save"); return; }
     if (!witchPotions.save) return;
     night.witchSave=true; witchPotions.save=false; showWitch(false);
-    setAction("🧪 Bạn rắc thuốc cứu — nạn nhân của sói đêm nay sẽ được cứu sống.","");
-    startTimer(2, function(){ nightStep++; runNightStep(); });
+    setAction("🧪 Bạn rắc thuốc cứu — nạn nhân của sói đêm nay sẽ được cứu sống.","Lượt này dừng đủ 30 giây.");
   });
   var poisonBtn=$("witchKillBtn");
   poisonBtn.addEventListener("click", function(){
@@ -630,8 +625,9 @@ export function bootWolf(onChange) {
   });
   $("witchSkipBtn").addEventListener("click", function(){
     if (net.mode==="guest"){ guestWitchAct("skip"); return; }
-    if (witchPoisonArmed){ witchPoisonArmed=false; witchArmSeat=-1; showWitch(true); runNightStep(); return; }
-    showWitch(false); nightStep++; runNightStep();
+    if (witchPoisonArmed){ witchPoisonArmed=false; witchArmSeat=-1; showWitch(true); setAction("🧙 <b>Phù thủy thức dậy.</b> Chọn thuốc, hoặc đợi hết 30 giây để bỏ qua.",""); return; }
+    showWitch(false);
+    setAction("🧙 Phù thủy bỏ qua đêm nay.","Lượt này dừng đủ 30 giây.");
   });
   $("gmMute").addEventListener("click", function(){
     gmOn = !gmOn;
@@ -936,7 +932,6 @@ export function bootWolf(onChange) {
     if (act==="save"){ if (!witchPotions.save) return; night.witchSave=true; witchPotions.save=false; }
     if (act==="arm"){ witchArmSeat=seat; sendPrivate(seat, "☠️ Đã mở thuốc độc — bấm vào người bạn muốn đầu độc."); return; }
     if (act==="skip"){ witchArmSeat=-1; }
-    if (act==="save"||act==="skip"){ net.waitingSeat=-1; stopTimer(); startTimer(1, function(){ nightStep++; runNightStep(); }); }
   }
 
   function guestJoin(){
