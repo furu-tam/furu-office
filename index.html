@@ -71,6 +71,11 @@
   .dtag.hot, .dtag.mine { background: var(--accent); color: var(--bg); border-color: var(--accent); }
   .dtag.hot b, .dtag.mine b { color: var(--bg); }
   .who, .facename { pointer-events: none; padding: 3px 8px; font-size: 12px; }
+  .who .tap, .facename .tap {
+    pointer-events: auto; margin-left: 6px; border: 0; cursor: pointer;
+    background: var(--accent); color: var(--bg); font: 800 11px var(--f-body);
+    border-radius: 999px; padding: 2px 7px;
+  }
   .who.me { border-color: var(--accent); }
   #bubbles { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
   .bubble {
@@ -163,6 +168,16 @@
     max-width: min(92vw, 460px); text-align: center;
   }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #tapNotice {
+    position: fixed; z-index: 40; top: calc(env(safe-area-inset-top, 0px) + 16px); left: 50%;
+    transform: translateX(-50%); display: flex; flex-direction: column; gap: 2px;
+    min-width: 240px; max-width: min(92vw, 420px); text-align: center;
+    background: #14323a; color: var(--ink); border: 1px solid var(--accent);
+    border-radius: 14px; padding: 12px 18px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    font: 700 15px/1.4 var(--f-body);
+  }
+  #tapNotice b { color: var(--accent); font-size: 12px; letter-spacing: 0.04em; }
+  #tapNotice[hidden] { display: none !important; }
   .plate, .dock { z-index: 6; }
   #btnChat, #btnChatToggle { position: relative; }
   #btnChat.has-note::after, #btnChatToggle.has-note::after {
@@ -285,6 +300,7 @@
   </div>
 </div>
 <div id="toast" role="status"></div>
+<div id="tapNotice" role="status" hidden><b>Vỗ vai</b><span></span></div>
 <p id="err" hidden>Trình duyệt này không chạy được WebGL.</p>
 
 <script type="importmap">
@@ -1567,6 +1583,108 @@ function toast(msg, ms) {
   clearTimeout(t._h);
   t._h = setTimeout(() => t.classList.remove('show'), ms || 3400);
 }
+function askNotify() {
+  if (!('Notification' in window) || Notification.permission !== 'default') return;
+  try { Notification.requestPermission(); } catch (e) {}
+}
+function ensureTapButton(el, id) {
+  if (!el) return;
+  el.dataset.who = id;
+  let btn = el.querySelector('.tap');
+  if (id === myId) { if (btn) btn.remove(); return; }
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tap';
+    btn.textContent = 'Vỗ vai';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      askNotify();
+      tapShoulder(el.dataset.who);
+    });
+    el.appendChild(btn);
+  }
+}
+function knock() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t0 = audioCtx.currentTime;
+    [0, 0.16].forEach((delay, i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sine';
+      o.frequency.value = i ? 540 : 320;
+      g.gain.setValueAtTime(0.0001, t0 + delay);
+      g.gain.exponentialRampToValueAtTime(0.09, t0 + delay + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + delay + 0.18);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t0 + delay); o.stop(t0 + delay + 0.2);
+    });
+  } catch (e) {}
+}
+const tapSent = new Map();
+const seenTap = new Set();
+function tapShoulder(id) {
+  const row = people.get(id);
+  if (!row || id === myId) return;
+  const now = performance.now();
+  if (now - (tapSent.get(id) || 0) < 2500) { toast('Vừa vỗ vai ' + row.name + '.'); return; }
+  tapSent.set(id, now);
+  row.bump = now;
+  const name = myName();
+  const tapId = 'tap-' + id + '-' + Date.now().toString(36);
+  const msg = { kind: 'tap', id: tapId, to: id, from: myId, name };
+  const desk = row.peerId && peers[row.peerId];
+  let sent = false;
+  if (desk && desk.conn && desk.conn.open) { sendTo(desk, msg); sent = true; }
+  if (floorHost) { broadcastFloor(msg); sent = true; }
+  else if (floorLink && floorLink.open) { try { floorLink.send(msg); sent = true; } catch (e) {} }
+  const say = { kind: 'say', id: tapId, from: myId, name, text: '👋 Vỗ vai ' + row.name };
+  onSay(say, floorHost, false);
+  if (!floorHost && floorLink && floorLink.open) { try { floorLink.send(say); sent = true; } catch (e) {} }
+  if (!sent) { toast('Đang nối phòng, thử lại sau giây lát.'); return; }
+  toast('Đã vỗ vai ' + row.name + '.');
+}
+function deliverTap(msg) {
+  if (!msg || msg.to !== myId || msg.from === myId) return;
+  const key = String(msg.id || msg.from);
+  if (seenTap.has(key)) return;
+  seenTap.add(key);
+  const name = String(msg.name || 'Đồng nghiệp').slice(0, 24);
+  const sender = people.get(msg.from);
+  if (sender) sender.bump = performance.now();
+  const box = $('tapNotice');
+  box.hidden = false;
+  box.querySelector('span').textContent = name + ' đang gọi bạn.';
+  clearTimeout(box._h);
+  box._h = setTimeout(() => { box.hidden = true; }, 7000);
+  toast(name + ' vỗ vai bạn.', 5000);
+  knock();
+  const base = 'Văn Phòng furuCRM';
+  document.title = 'Vỗ vai · ' + name;
+  clearTimeout(deliverTap._t);
+  deliverTap._t = setTimeout(() => { document.title = base; }, 8000);
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      const n = new Notification('Vỗ vai · ' + name, { body: name + ' đang gọi bạn trong văn phòng furuCRM.', tag: 'furu-tap' });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch (e) {}
+  }
+}
+function personUnderPointer() {
+  const hits = raycaster.intersectObjects(G.people.children, true);
+  for (const hit of hits) {
+    let o = hit.object;
+    while (o) {
+      if (o.userData && o.userData.personId && o.userData.personId !== myId) return o.userData.personId;
+      o = o.parent;
+    }
+  }
+  return '';
+}
 function myName() {
   const v = $('nameInput').value.trim();
   return v ? v.slice(0, 24) : 'Bạn ' + myId.slice(0, 4);
@@ -1632,6 +1750,8 @@ function upsertSeat(info) {
   const sitY = seat.y || 0;
   if (!row.body) row.body = seated(G.people, seat.x, seat.z, seat.yaw, sitY);
   else { row.body.position.set(seat.x, sitY, seat.z); row.body.rotation.y = seat.yaw; }
+  row.body.userData.personId = info.id;
+  ensureTapButton(row.el, info.id);
 }
 function removeSeat(id) {
   const row = people.get(id);
@@ -1692,6 +1812,11 @@ function placeOffice() {
     row.el.hidden = _pt.z > 1 || disc;
     row.el.style.left = ((_pt.x + 1) / 2 * w) + 'px';
     row.el.style.top = ((1 - _pt.y) / 2 * h) + 'px';
+    if (row.body && row.bump) {
+      const age = performance.now() - row.bump;
+      row.body.rotation.z = age > 700 ? 0 : Math.sin(age / 55) * 0.22;
+      if (age > 700) row.bump = 0;
+    }
   });
   if (myIsland > 0) {
     const island = islandOf(myIsland);
@@ -1784,7 +1909,12 @@ function joinDesk(index, prefer) {
   const used = takenSlots(index);
   let slot = 0;
   if (prefer >= 0) {
-    if (used.has(prefer + 1)) { toast('Chỗ này đã có người. Chọn chỗ trống khác, hoặc bấm tên đảo.'); return; }
+    if (used.has(prefer + 1)) {
+      const who = [...people.values()].find((r) => r.table === index + 1 && r.slot === prefer + 1 && r.id !== myId);
+      if (who) { tapShoulder(who.id); return; }
+      toast('Chỗ này đã có người. Chọn chỗ trống khác, hoặc bấm tên đảo.');
+      return;
+    }
     slot = prefer + 1;
   } else {
     for (let s = 1; s <= islands[index].seats.length; s++) if (!used.has(s)) { slot = s; break; }
@@ -1828,6 +1958,7 @@ function enterDesk(index, slot) {
   ring.visible = false;
   announceSeat();
   sitCamera(island.seats[slot - 1]);
+  askNotify();
   if (quiet) setConn('on', 'Chỗ ngồi chơi, không bật mic hay camera');
   else openTablePeer();
 }
@@ -1921,6 +2052,7 @@ function refreshScreens() {
     const micOff = peer ? peer.micOn === false : false;
     ensureMicTag(screen.userData.tag);
     screen.userData.tag.querySelector('.nm').textContent = name + (micOff ? ' · mic tắt' : '');
+    ensureTapButton(screen.userData.tag, row.id);
     const face = screen.userData.face;
     const stream = peer && peer.remoteStream;
     const hasVideo = stream && peer.camOn !== false && stream.getVideoTracks().some((t) => t.readyState === 'live');
@@ -2340,8 +2472,14 @@ function showBubble(from, name, text) {
 }
 function onSay(msg, relay, fromLog) {
   if (!msg || !msg.id || !msg.text) return;
-  const text = String(msg.text).slice(0, 300);
   const id = String(msg.id);
+  if (id.startsWith('tap-')) {
+    const target = id.slice(4, 13);
+    if (!fromLog && target === myId) deliverTap({ id, to: myId, from: msg.from, name: msg.name });
+    if (relay && floorHost) broadcastFloor({ kind: 'say', id, from: msg.from, name: msg.name, text: String(msg.text).slice(0, 300) });
+    return;
+  }
+  const text = String(msg.text).slice(0, 300);
   const fresh = !seenSay.has(id);
   if (fresh) {
     seenSay.add(id);
@@ -2621,6 +2759,7 @@ function handleData(pid, m) {
   } else if (m.kind === 'screen') {
     if (!m.on && !sharing) clearMeetingScreen();
   } else if (m.kind === 'bye') removePeer(pid, true);
+  else if (m.kind === 'tap') deliverTap({ id: m.id, to: myId, from: m.from || pid, name: m.name || entry.name });
 }
 function sendTo(entry, obj) {
   try { if (entry.conn && entry.conn.open) entry.conn.send(obj); } catch (e) {}
@@ -2703,6 +2842,11 @@ function onFloorData(msg, from) {
   }
   if (msg.kind === 'gone' && floorHost) { applyPresence(msg, true); return; }
   if (msg.kind === 'say') { onSay(msg, floorHost, false); return; }
+  if (msg.kind === 'tap') {
+    if (floorHost && from) broadcastFloor(msg);
+    deliverTap(msg);
+    return;
+  }
   if (msg.kind === 'log' && Array.isArray(msg.items) && !floorHost) {
     msg.items.forEach((item) => onSay(item, false, true));
     return;
@@ -2872,6 +3016,10 @@ canvas.addEventListener('pointerup', (e) => {
     const tvHit = raycaster.intersectObject(meetingTvMesh, false)[0];
     if (tvHit) { openTvFull(); return; }
   }
+  if (!inSecurity && !watchingFish) {
+    const person = personUnderPointer();
+    if (person) { askNotify(); tapShoulder(person); return; }
+  }
   if (myIsland !== 0 || inSecurity) return;
   const hit = raycaster.intersectObjects(pickers, false)[0];
   if (hit && hit.object.userData.fish) { enterFish(); return; }
@@ -2888,10 +3036,20 @@ canvas.addEventListener('pointermove', (e) => {
     hoveredIsland = -1; ring.visible = false;
     return;
   }
-  if (myIsland !== 0 || inSecurity) { hoveredIsland = -1; ring.visible = false; canvas.style.cursor = ''; return; }
+  if (myIsland !== 0 || inSecurity) {
+    pointer.x = (e.clientX / innerWidth) * 2 - 1;
+    pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+    hoveredIsland = -1; ring.visible = false;
+    canvas.style.cursor = !inSecurity && !watchingFish && personUnderPointer() ? 'pointer' : '';
+    return;
+  }
   pointer.x = (e.clientX / innerWidth) * 2 - 1;
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  if (!watchingFish && personUnderPointer()) {
+    hoveredIsland = -1; ring.visible = false; canvas.style.cursor = 'pointer'; return;
+  }
   const hit = raycaster.intersectObjects(pickers, false)[0];
   if (hit && (hit.object.userData.fish || hit.object.userData.security)) {
     hoveredIsland = -1; ring.visible = false; canvas.style.cursor = 'pointer'; return;
