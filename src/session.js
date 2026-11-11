@@ -380,7 +380,9 @@ function announceSeat() {
 }
 function myWalkId() { return 'furuoff-w-' + myId; }
 function announceWalk() {
-  const who = { id: myId, name: myName(), walk: 1, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw, walkId: myWalkId(), look: myLook };
+  // camera nhìn trục -Z nên yaw model = fpvYaw + π — gửi luôn yaw model để
+  // remote vẽ body.rotation.y đúng chiều mặt (và "đi tới" dùng đúng hướng lưng)
+  const who = { id: myId, name: myName(), walk: 1, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw + Math.PI, walkId: myWalkId(), look: myLook };
   myPresence = who;
   upsertSeat(who);
   sendPresence({ kind: 'here', who });
@@ -2584,7 +2586,7 @@ function sendWalkPos() {
   const now = performance.now();
   if (now - fpvSentAt < 100) return;
   fpvSentAt = now;
-  sendPresence({ kind: 'move', id: myId, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw });
+  sendPresence({ kind: 'move', id: myId, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw + Math.PI });
 }
 document.addEventListener('visibilitychange', () => {
   if (fpv && document.hidden) { fpvSentAt = 0; sendWalkPos(); }
