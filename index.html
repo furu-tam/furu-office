@@ -48,8 +48,22 @@
     background: var(--plate); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(8px);
     font: 600 13px var(--f-body); color: var(--ink);
   }
-  #pairAsk button { font: 600 13px var(--f-body); color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
-  #pairAsk #pairYes { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  #pairAsk button, #tapAsk button { font: 600 13px var(--f-body); color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+  #pairAsk #pairYes, #tapAsk #tapYes { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  #tapAsk {
+    position: fixed; z-index: 9; bottom: calc(env(safe-area-inset-bottom, 0px) + 74px); left: 50%; transform: translateX(-50%);
+    display: flex; gap: 10px; align-items: center; padding: 10px 14px; max-width: calc(100vw - 28px);
+    background: var(--plate); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(8px);
+    font: 600 13px var(--f-body); color: var(--ink);
+  }
+  #tapTag, #radioTag {
+    position: absolute; transform: translate(-50%, -50%); z-index: 6; pointer-events: auto; cursor: pointer;
+    font: 700 12px var(--f-body); color: var(--bg); background: var(--accent); border: 0; border-radius: 999px;
+    padding: 6px 12px; white-space: nowrap; box-shadow: 0 2px 10px rgba(0,0,0,.35);
+  }
+  #btnConvoEnd { position: fixed; z-index: 9; bottom: calc(env(safe-area-inset-bottom, 0px) + 40px); left: 50%; transform: translateX(-50%); }
+  #crosshair { position: fixed; z-index: 5; left: 50%; top: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,.85); font: 400 20px/1 monospace; pointer-events: none; text-shadow: 0 0 4px rgba(0,0,0,.6); }
+  #ytBox { position: fixed; width: 1px; height: 1px; left: -10px; top: -10px; opacity: .01; pointer-events: none; }
   #labels { position: fixed; inset: 0; pointer-events: none; }
   .tag {
     position: absolute; transform: translate(-50%, -50%); white-space: nowrap; text-align: center;
@@ -265,6 +279,8 @@
   <button id="vlounge" type="button" aria-pressed="false">Góc nghỉ</button>
   <button id="btnFish" type="button" aria-pressed="false">Ngắm cá</button>
   <button id="vagent" type="button" aria-pressed="false">Theo agent</button>
+  <button id="vwalk" type="button" aria-pressed="false">Đi dạo</button>
+  <button id="vhome" type="button" aria-pressed="false">Home</button>
 </div>
 <div class="dock" id="dockRoom" hidden>
   <button type="button" class="talk" id="btnTalk">Bật tiếng</button>
@@ -284,6 +300,14 @@
   <button type="button" id="pairYes">Nhận</button>
   <button type="button" id="pairNo">Từ chối</button>
 </div>
+<div id="tapAsk" hidden>
+  <span id="tapAskText"></span>
+  <button type="button" id="tapYes">Nhận</button>
+  <button type="button" id="tapNo">Từ chối</button>
+</div>
+<button type="button" id="btnConvoEnd" class="leave" hidden>Rời cuộc trò chuyện</button>
+<div id="crosshair" hidden>+</div>
+<div id="ytBox"></div>
 <div id="tvFull" hidden>
   <video id="tvFullVideo" autoplay playsinline></video>
   <button type="button" id="tvFullClose">Đóng</button>
@@ -1485,6 +1509,7 @@ let hoveredIsland = -1;
 const buttons = [...document.querySelectorAll('#dockView button')];
 function go(id) {
   endFishWatch();
+  if (fpv) exitFpv();
   if (id !== 'vagent') follow = -1;
   buttons.forEach(b => b.setAttribute('aria-pressed', String(b.id === id)));
   if (id === 'vagent') {
@@ -1510,7 +1535,9 @@ function go(id) {
   if (REDUCED) { persp.position.copy(p1); controls.target.copy(t1); tween = null; return; }
   tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1, t1, s: 0 };
 }
-buttons.forEach(b => { if (b.id !== 'btnFish') b.addEventListener('click', () => go(b.id)); });
+buttons.forEach(b => { if (b.id !== 'btnFish' && b.id !== 'vwalk' && b.id !== 'vhome') b.addEventListener('click', () => go(b.id)); });
+document.getElementById('vwalk').addEventListener('click', () => { if (fpv) exitFpv(); else enterFpv(); });
+document.getElementById('vhome').addEventListener('click', () => { if (fpv) exitFpv(); else go('v3d'); });
 controls.addEventListener('start', () => { tween = null; });
 
 function resize() {
@@ -1550,6 +1577,24 @@ let pairPeer = null;       // peerId đang nói riêng 1:1
 let pairOut = null;        // {pid, timer} invite mình gửi, chờ nhận
 let pairIn = null;         // {pid, timer} invite người ta gửi tới mình
 let pairMutedCalls = [];   // các call đã tắt sender khi đang nói riêng
+// --- đi dạo FPV + vỗ vai + convo + radio bot (issue #2) ---
+let fpv = false;
+let fpvYaw = 0, fpvPitch = 0;
+const fpvKeys = new Set();
+const fpvPos = new THREE.Vector3(0, 0, 3);
+let fpvSentAt = 0;
+let walkPeer = null;          // Peer thứ 2: 'furuoff-w-{id}' — kênh vỗ vai/convo
+const wconns = new Map();     // walkId -> DataConnection
+const walkCalls = new Map();  // walkId -> MediaConnection
+const walkStreams = new Map();// walkId -> MediaStream (remote)
+const convoSet = new Set();   // walkId các member trong cuộc trò chuyện
+let convoFar = 0;             // giây mọi member đều xa
+let tapTarget = null;         // row đang trong tầm vỗ vai
+let tapIn = null;             // {walkId, name, timer} tap tới đang chờ trả lời
+const radioPos = { x: 4.85, z: -6.1 };
+const ytVid = new URLSearchParams(location.search).get('yt') || '9kzE8isXlQY';
+let ytPlayer = null, ytReady = false, ytArmed = false;
+const colliders = [];         // {x0,z0,x1,z1} — AABB nội thất/tường, resolve theo trục
 
 const $ = (id) => document.getElementById(id);
 const _pt = new THREE.Vector3();
@@ -1647,9 +1692,9 @@ function setProp(table, slot, visible) {
   if (seat && seat.prop) seat.prop.visible = visible;
 }
 function upsertSeat(info) {
-  if (!info || !info.id || !info.table || !info.slot) return;
+  if (!info || !info.id || (!info.walk && (!info.table || !info.slot))) return;
   const seat = seatOf(info.table, info.slot);
-  if (!seat) return;
+  if (!seat && !info.walk) return;
   let row = people.get(info.id);
   if (!row) {
     const el = document.createElement('div');
@@ -1668,6 +1713,17 @@ function upsertSeat(info) {
   row.el.classList.toggle('me', mine);
   ensureMicTag(row.el);
   row.el.querySelector('.nm').textContent = row.name + (mine ? ' · bạn' : '');
+  if (info.walkId) row.walkId = String(info.walkId);
+  if (info.walk) {
+    row.walk = 1; row.table = 0; row.slot = 0;
+    row.wx = info.x || 0; row.wz = info.z || 0; row.wyaw = info.yaw || 0;
+    if (prev) setProp(prev.table, prev.slot, true);
+    if (!row.body) row.body = seated(G.people, row.wx, row.wz, row.wyaw, 0);
+    else { row.body.position.set(row.wx, 0, row.wz); row.body.rotation.y = row.wyaw; }
+    row.body.visible = !mine;
+    return;
+  }
+  row.walk = 0;
   if (prev) setProp(prev.table, prev.slot, true);
   setProp(row.table, row.slot, false);
   const sitY = seat.y || 0;
@@ -1678,7 +1734,7 @@ function removeSeat(id) {
   const row = people.get(id);
   if (!row) return;
   if (row.peerId && peers[row.peerId]) removePeer(row.peerId, false);
-  setProp(row.table, row.slot, true);
+  if (row.table && row.slot) setProp(row.table, row.slot, true);
   if (row.body) G.people.remove(row.body);
   row.el.remove();
   const bubble = bubbles.get(id);
@@ -1686,7 +1742,7 @@ function removeSeat(id) {
   people.delete(id);
 }
 function rosterList() {
-  return [...people.values()].map((r) => ({ id: r.id, name: r.name, table: r.table, slot: r.slot, peerId: r.peerId || '' }));
+  return [...people.values()].map((r) => ({ id: r.id, name: r.name, table: r.table, slot: r.slot, peerId: r.peerId || '', walkId: r.walkId || '', walk: r.walk || 0, x: r.wx, z: r.wz, yaw: r.wyaw }));
 }
 function announceSeat() {
   if (myIsland === 0) {
@@ -1695,7 +1751,7 @@ function announceSeat() {
     sendPresence({ kind: 'gone', id: myId });
     return;
   }
-  const who = { id: myId, name: myName(), table: myIsland, slot: mySlot, peerId: myCallId() };
+  const who = { id: myId, name: myName(), table: myIsland, slot: mySlot, peerId: myCallId(), walkId: myWalkId() };
   myPresence = who;
   upsertSeat(who);
   sendPresence({ kind: 'here', who });
@@ -1727,7 +1783,15 @@ function placeOffice() {
   }
   people.forEach((row) => {
     const seat = seatOf(row.table, row.slot);
-    if (!seat) { row.el.hidden = true; return; }
+    if (!seat) {
+      if (row.walk) {
+        _pt.set(row.wx, 1.75, row.wz).project(camera);
+        row.el.hidden = _pt.z > 1 || row.id === myId;
+        row.el.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+        row.el.style.top = ((1 - _pt.y) / 2 * h) + 'px';
+      } else row.el.hidden = true;
+      return;
+    }
     _pt.set(seat.x, 1.75 + (seat.y || 0), seat.z).project(camera);
     const disc = myIsland === row.table && row.id !== myId;
     row.el.hidden = _pt.z > 1 || disc;
@@ -1752,6 +1816,21 @@ function placeOffice() {
     });
   }
   placeBubbles(w, h);
+  if (tapTarget && fpv) {
+    const tp = posOf(tapTarget);
+    if (tp) {
+      _pt.set(tp.x, 1.9 + (tp.y || 0), tp.z).project(camera);
+      tapTagEl.hidden = _pt.z > 1;
+      tapTagEl.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+      tapTagEl.style.top = ((1 - _pt.y) / 2 * h) + 'px';
+    } else tapTagEl.hidden = true;
+  } else if (!tapTarget) tapTagEl.hidden = true;
+  if (radioGainNow > 0) {
+    _pt.set(radioPos.x, 2.1, radioPos.z).project(camera);
+    radioTagEl.hidden = _pt.z > 1;
+    radioTagEl.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+    radioTagEl.style.top = ((1 - _pt.y) / 2 * h) + 'px';
+  } else radioTagEl.hidden = true;
 }
 function placeBubbles(w, h) {
   const hide = camera !== persp || watchingFish || inSecurity;
@@ -1869,6 +1948,7 @@ function enterDesk(index, slot) {
   refreshScreens();
   ring.visible = false;
   announceSeat();
+  ensureWalkPeer();
   sitCamera(island.seats[slot - 1]);
   if (quiet) setConn('on', 'Chỗ ngồi chơi, không bật mic hay camera');
   else openTablePeer();
@@ -1882,6 +1962,8 @@ function leaveDesk(silent) {
   pairMutedCalls = [];
   broadcastOn = false;
   dnd = false;
+  if (tapIn) { clearTimeout(tapIn.timer); tapIn = null; $('tapAsk').hidden = true; }
+  leaveConvo(true);
   hearRing.visible = false;
   hidePairAsk();
   syncPairUI();
@@ -2009,6 +2091,11 @@ function rowAtSeat(table, slot) {
 function hearingGain(pid) {
   if (dnd) return 0;
   if (pairPeer) return pid === pairPeer ? 1 : (inMeeting() ? PAIR_DUCK : 0);
+  if (convoSet.size) {
+    const row0 = seatByPeer(pid);
+    if (row0 && row0.walkId && convoSet.has(row0.walkId)) return 0;   // member → nghe qua kênh convo
+    return PAIR_DUCK;                                                // đảo duck 15% khi đang convo
+  }
   if (inMeeting()) return 1;
   const entry = peers[pid];
   if (entry && entry.bc) return 1;
@@ -2023,6 +2110,7 @@ function hearingGain(pid) {
   return 1 - (d - HEAR_FULL) / (HEAR_RANGE - HEAR_FULL);
 }
 function applyGains() {
+  applyWalkGains();
   Object.keys(peers).forEach((pid) => {
     const entry = peers[pid];
     if (!entry || !entry.remoteStream) return;
@@ -2881,6 +2969,7 @@ function setDnd(on) {
   if (on === dnd) return;
   if (on) {
     if (pairPeer) exitPair();
+    leaveConvo(true);
     if (pairOut) { const e = peers[pairOut.pid]; clearTimeout(pairOut.timer); if (e) sendTo(e, { kind: 'pair-end' }); pairOut = null; }
     if (pairIn) { clearTimeout(pairIn.timer); declinePair(pairIn.pid); }
     dnd = true;
@@ -2901,9 +2990,345 @@ function setDnd(on) {
   updateSelf();
   refreshScreens();
 }
+// ---------- radio bot ở đảo View biển + colliders cho FPV ----------
+(() => {
+  const g = new THREE.Group(); g.position.set(radioPos.x, 0, radioPos.z);
+  cyl(0.22, 0.26, 0.42, mat.chair, 0, 0.21, 0, g, 10);                       // ghế đôn
+  const boom = box(0.34, 0.2, 0.14, mat.rack, 0.3, 0.62, -0.05, g);          // loa
+  boom.rotation.y = -0.5;
+  for (const s of [-1, 1]) cyl(0.05, 0.05, 0.02, mat.chrome, 0.3 + s * 0.09, 0.62, -0.12, g, 10);
+  G.people.add(g);
+  seated(G.people, radioPos.x, radioPos.z - 0.02, Math.PI * 0.9, 0);
+})();
+islands.forEach((island) => {                                                // AABB khu bàn: ghế shrink 1.6m
+  if (!island.seats.length) return;
+  const xs = island.seats.map(s => s.x), zs = island.seats.map(s => s.z);
+  const b = { x0: Math.min(...xs) + 1.6, z0: Math.min(...zs) + 1.6, x1: Math.max(...xs) - 1.6, z1: Math.max(...zs) - 1.6 };
+  if (b.x1 - b.x0 < 0.4) { const c = (b.x0 + b.x1) / 2; b.x0 = c - 0.5; b.x1 = c + 0.5; }
+  if (b.z1 - b.z0 < 0.4) { const c = (b.z0 + b.z1) / 2; b.z0 = c - 0.5; b.z1 = c + 0.5; }
+  colliders.push(b);
+});
+colliders.push(
+  { x0: -12.4, z0: 4.4, x1: -9.9, z1: 9.4 },   // phòng server (staff only)
+  { x0: 10.6, z0: -9.4, x1: 12.4, z1: -4.4 },  // phòng security
+  { x0: -12.4, z0: -6.3, x1: -11.9, z1: -2.9 },// quầy cà phê
+  { x0: -2.4, z0: 5.9, x1: -0.6, z1: 7.4 },    // quầy lễ tân
+  { x0: 0.3, z0: 5.6, x1: 2.6, z1: 7.6 },      // hồ cá
+  { x0: radioPos.x - 0.4, z0: radioPos.z - 0.4, x1: radioPos.x + 0.4, z1: radioPos.z + 0.4 },
+);
+
+// ---------- FPV + vỗ vai → convo + radio ----------
+function myWalkId() { return 'furuoff-w-' + myId; }
+function myPos() {
+  if (fpv) return { x: fpvPos.x, z: fpvPos.z, y: 0 };
+  if (myIsland) { const s = seatOf(myIsland, mySlot); if (s) return { x: s.x, z: s.z, y: s.y || 0 }; }
+  return null;
+}
+function posOf(row) {
+  if (!row) return null;
+  if (row.walk) return { x: row.wx, z: row.wz, y: 0 };
+  const s = seatOf(row.table, row.slot);
+  return s ? { x: s.x, z: s.z, y: s.y || 0 } : null;
+}
+function rowByWalk(wid) { for (const r of people.values()) if (r.walkId === wid) return r; return null; }
+function distGain(d) { return d <= HEAR_FULL ? 1 : Math.max(0, (HEAR_RANGE - d) / (HEAR_RANGE - HEAR_FULL)); }
+function hitWall(x, z) {
+  const r = 0.3;
+  return colliders.some(b => x + r > b.x0 && x - r < b.x1 && z + r > b.z0 && z - r < b.z1);
+}
+function findSpawn(sx, sz, island) {
+  let x = sx, z = sz;
+  if (hitWall(x, z) && island) {
+    let dx = sx - island.center.x, dz = sz - island.center.z;
+    const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
+    for (let i = 0; i < 40 && hitWall(x, z); i++) { x += dx * 0.2; z += dz * 0.2; }
+    if (hitWall(x, z)) { x = 0; z = 4; }
+  }
+  return { x, z };
+}
+function enterFpv(sx, sz, syaw) {
+  if (fpv) return;
+  if (myIsland > 0) leaveDesk();
+  ensureWalkPeer();
+  fpv = true;
+  fpvPos.set(sx ?? 0, 0, sz ?? 4); fpvYaw = syaw ?? Math.PI; fpvPitch = 0;
+  $('crosshair').hidden = false;
+  document.getElementById('vwalk').setAttribute('aria-pressed', 'true');
+  $('hint').textContent = 'WASD di chuyển · chuột nhìn · click vào ghế trống để ngồi / vào người để vỗ vai · Esc thả chuột, Home để về view';
+  camera = persp; controls.enabled = false; labelsEl.hidden = true; tween = null;
+  canvas.requestPointerLock();
+  announceWalk();
+}
+function exitFpv() {
+  if (!fpv) return;
+  fpv = false; fpvKeys.clear();
+  $('crosshair').hidden = true;
+  document.getElementById('vwalk').setAttribute('aria-pressed', 'false');
+  tapTarget = null; tapTagEl.hidden = true;
+  if (document.pointerLockElement) document.exitPointerLock();
+  if (myIsland === 0) { myPresence = null; removeSeat(myId); sendPresence({ kind: 'gone', id: myId }); }
+  go('v3d');
+}
+document.addEventListener('pointerlockchange', () => {
+  if (fpv && document.pointerLockElement !== canvas) {
+    $('hint').textContent = 'Đi dạo tạm dừng · click vào màn hình để tiếp tục · Esc/Home để về view mặc định';
+  }
+});
+document.addEventListener('mousemove', (e) => {
+  if (!fpv || document.pointerLockElement !== canvas) return;
+  fpvYaw -= e.movementX * 0.0022;
+  fpvPitch = Math.max(-1.45, Math.min(1.45, fpvPitch - e.movementY * 0.0022));
+});
+const KEYMAP = { KeyW: [0, -1], KeyS: [0, 1], KeyA: [-1, 0], KeyD: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+document.addEventListener('keydown', (e) => { if (fpv && KEYMAP[e.code]) { fpvKeys.add(e.code); e.preventDefault(); } });
+document.addEventListener('keyup', (e) => fpvKeys.delete(e.code));
+document.addEventListener('keydown', (e) => { if (e.code === 'Escape' && fpv && document.pointerLockElement !== canvas) exitFpv(); });
+function fpvTick(dt) {
+  let dx = 0, dz = 0;
+  fpvKeys.forEach(k => { dx += KEYMAP[k][0]; dz += KEYMAP[k][1]; });
+  if (dx || dz) {
+    const fx = -Math.sin(fpvYaw), fz = -Math.cos(fpvYaw);
+    const rx = Math.cos(fpvYaw), rz = -Math.sin(fpvYaw);
+    let mx = fx * -dz + rx * dx, mz = fz * -dz + rz * dx;
+    const L = Math.hypot(mx, mz) || 1, sp = 3 * dt / L;
+    mx *= sp; mz *= sp;
+    if (!hitWall(fpvPos.x + mx, fpvPos.z)) fpvPos.x += mx;
+    if (!hitWall(fpvPos.x, fpvPos.z + mz)) fpvPos.z += mz;
+    fpvPos.x = Math.max(-11.9, Math.min(11.9, fpvPos.x));
+    fpvPos.z = Math.max(-8.9, Math.min(8.9, fpvPos.z));
+  }
+  persp.position.set(fpvPos.x, 1.6, fpvPos.z);
+  persp.rotation.order = 'YXZ';
+  persp.rotation.set(fpvPitch, fpvYaw, 0);
+  const now = performance.now();
+  if (now - fpvSentAt > 100) {
+    fpvSentAt = now;
+    sendPresence({ kind: 'move', id: myId, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw });
+  }
+}
+function announceWalk() {
+  const who = { id: myId, name: myName(), walk: 1, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw, walkId: myWalkId() };
+  myPresence = who;
+  upsertSeat(who);
+  sendPresence({ kind: 'here', who });
+}
+function applyPos(m) {
+  const row = people.get(m.id);
+  if (!row || !row.walk) return;
+  row.wx = m.x; row.wz = m.z; row.wyaw = m.yaw;
+}
+// --- walk peer: kênh vỗ vai + convo ---
+function ensureWalkPeer() {
+  if (walkPeer) return Promise.resolve();
+  return loadPeerLib().then((ok) => ok ? iceServers() : null).then((ice) => {
+    if (!ice || walkPeer) return;
+    walkPeer = new Peer(myWalkId(), { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true });
+    walkPeer.on('connection', (conn) => {
+      wconns.set(conn.peer, conn);
+      conn.on('data', (d) => handleWalkData(conn.peer, d));
+      conn.on('close', () => wconns.delete(conn.peer));
+    });
+    walkPeer.on('call', (call) => {
+      if (!pendingWalk.has(call.peer) && !convoSet.has(call.peer)) { try { call.close(); } catch (e) {} return; }
+      pendingWalk.delete(call.peer);
+      try { call.answer(localStream || new MediaStream()); } catch (e) { try { call.close(); } catch (e2) {} return; }
+      walkCalls.set(call.peer, call);
+      convoSet.add(call.peer);
+      $('btnConvoEnd').hidden = false;
+      call.on('stream', (s) => addWalkStream(call.peer, s));
+      call.on('close', () => dropWalkPeer(call.peer));
+    });
+    walkPeer.on('error', (e) => { if (e && e.type === 'peer-unavailable') toast('Không kết nối được'); });
+  });
+}
+function addWalkStream(wid, stream) {
+  walkStreams.set(wid, stream);
+  playRemoteAudio(stream);
+  applyWalkGains();
+}
+function dropWalkPeer(wid) {
+  const s = walkStreams.get(wid);
+  if (s) { const a = remoteAudio.get(s.id); if (a) { try { a.pause(); a.srcObject = null; a.remove(); } catch (e) {} remoteAudio.delete(s.id); } }
+  walkCalls.delete(wid); walkStreams.delete(wid);
+  convoSet.delete(wid);
+  if (!convoSet.size) $('btnConvoEnd').hidden = true;
+}
+function dialWalk(wid) {
+  if (!walkPeer || walkCalls.has(wid)) return;
+  let conn = wconns.get(wid);
+  if (!conn || !conn.open) {
+    conn = walkPeer.connect(wid, { reliable: true });
+    wconns.set(wid, conn);
+  }
+  if (!conn.__hwd) { conn.__hwd = true; conn.on('data', (d) => handleWalkData(wid, d)); conn.on('close', () => wconns.delete(wid)); }
+  let call;
+  try { call = walkPeer.call(wid, localStream || new MediaStream()); } catch (e) { return; }
+  walkCalls.set(wid, call);
+  call.on('stream', (s) => addWalkStream(wid, s));
+  call.on('close', () => dropWalkPeer(wid));
+}
+function ensureVoiceThen(fn) {
+  if (localStream) { fn(); return; }
+  navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+    .then((s) => { localStream = s; micOn = true; fn(); })
+    .catch(() => toast('Không lấy được mic'));
+}
+function joinConvo(wid, members) {
+  if (pairPeer) exitPair();
+  ensureVoiceThen(() => {
+    convoSet.add(wid);
+    dialWalk(wid);
+    members.forEach((m) => { if (m !== myWalkId() && !convoSet.has(m)) { convoSet.add(m); setTimeout(() => dialWalk(m), 700); } });
+    $('btnConvoEnd').hidden = false;
+    applyGains(); applyWalkGains();
+    toast('Đang trò chuyện' + (convoSet.size > 1 ? ' · ' + convoSet.size + ' người' : ''));
+  });
+}
+function leaveConvo(silent) {
+  if (!convoSet.size && !walkCalls.size) return;
+  convoSet.forEach((wid) => { const c = wconns.get(wid); try { if (c && c.open) c.send({ kind: 'convo-leave', id: myWalkId() }); } catch (e) {} });
+  convoSet.clear();
+  walkCalls.forEach((c) => { try { c.close(); } catch (e) {} });
+  walkCalls.clear(); walkStreams.clear(); wconns.clear();
+  convoFar = 0;
+  $('btnConvoEnd').hidden = true;
+  applyGains(); applyWalkGains();
+  if (!silent) toast('Đã rời cuộc trò chuyện');
+}
+function handleWalkData(wid, d) {
+  if (!d || !d.kind) return;
+  if (d.kind === 'tap') {
+    if (dnd || pairPeer || convoSet.size) {
+      const c = wconns.get(wid);
+      try { if (c && c.open) c.send({ kind: 'tap-busy', reason: dnd ? 'dnd' : pairPeer ? 'pair' : 'convo' }); } catch (e) {}
+      return;
+    }
+    if (tapIn) clearTimeout(tapIn.timer);
+    tapIn = { walkId: wid, name: d.name || 'Ai đó' };
+    $('tapAskText').textContent = tapIn.name + ' vỗ vai bạn — nói chuyện?';
+    $('tapAsk').hidden = false;
+    tapIn.timer = setTimeout(() => { $('tapAsk').hidden = true; tapIn = null; }, 15000);
+  } else if (d.kind === 'tap-accept') {
+    joinConvo(wid, d.members || []);
+  } else if (d.kind === 'tap-busy') {
+    toast(d.reason === 'dnd' ? 'Người đó đang bật Không làm phiền' : d.reason === 'convo' ? 'Người đó đang trong cuộc trò chuyện khác' : 'Người đó đang nói riêng');
+  } else if (d.kind === 'convo-join') {
+    if (convoSet.size) { convoSet.add(d.id); pendingWalk.add(d.id); applyWalkGains(); }
+  } else if (d.kind === 'convo-leave') {
+    const c = walkCalls.get(d.id); try { if (c) c.close(); } catch (e) {}
+    dropWalkPeer(d.id);
+    applyWalkGains();
+  }
+}
+function walkGain(wid) {
+  if (!convoSet.has(wid)) return 0;
+  const me = myPos(), row = rowByWalk(wid), tp = row && posOf(row);
+  if (!me || !tp) return 0;
+  return distGain(Math.hypot(me.x - tp.x, me.z - tp.z));
+}
+function applyWalkGains() {
+  walkStreams.forEach((s, wid) => { const el = remoteAudio.get(s.id); if (el) el.volume = walkGain(wid); });
+}
+function sendTap(row) {
+  if (!row || !row.walkId || row.id === myId) return;
+  if (convoSet.size && convoSet.has(row.walkId)) return;
+  ensureWalkPeer().then(() => {
+    let conn = wconns.get(row.walkId);
+    if (!conn || !conn.open) {
+      conn = walkPeer.connect(row.walkId, { reliable: true });
+      wconns.set(row.walkId, conn);
+      conn.on('open', () => conn.send({ kind: 'tap', name: myName() }));
+    } else conn.send({ kind: 'tap', name: myName() });
+    if (!conn.__hwd) { conn.__hwd = true; conn.on('data', (d) => handleWalkData(row.walkId, d)); conn.on('close', () => wconns.delete(row.walkId)); }
+    toast('Đã vỗ vai ' + row.name + ' — chờ nhận');
+  });
+}
+// --- radio bot: YouTube ẩn + volume theo khoảng cách ---
+window.onYouTubeIframeAPIReady = () => {
+  ytPlayer = new YT.Player('ytBox', {
+    videoId: ytVid,
+    playerVars: { autoplay: 1, mute: 1, loop: 1, playlist: ytVid, controls: 0, disablekb: 1, rel: 0, playsinline: 1 },
+    events: { onReady: () => { ytReady = true; } },
+  });
+};
+(() => { const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s); })();
+const armYt = () => { if (ytArmed || !ytReady) return; try { ytPlayer.unMute(); ytPlayer.playVideo(); ytArmed = true; } catch (e) {} };
+addEventListener('pointerdown', armYt);
+addEventListener('keydown', armYt);
+const radioTagEl = document.createElement('div');
+radioTagEl.id = 'radioTag'; radioTagEl.hidden = true; radioTagEl.style.pointerEvents = 'none';
+document.body.appendChild(radioTagEl);
+let radioGainNow = 0;
+const tapTagEl = document.createElement('button');
+tapTagEl.id = 'tapTag'; tapTagEl.type = 'button'; tapTagEl.hidden = true;
+tapTagEl.addEventListener('click', () => { if (tapTarget) sendTap(tapTarget); });
+document.body.appendChild(tapTagEl);
+const pendingWalk = new Set();   // walkId được duyệt nhận call (tap-accept / convo-join)
+$('tapYes').addEventListener('click', () => {
+  $('tapAsk').hidden = true;
+  const t = tapIn; tapIn = null;
+  if (!t) return;
+  if (pairPeer) exitPair();
+  ensureWalkPeer().then(() => ensureVoiceThen(() => {
+    const conn = wconns.get(t.walkId);
+    try { if (conn && conn.open) conn.send({ kind: 'tap-accept', members: [...convoSet, myWalkId()] }); } catch (e) {}
+    wconns.forEach((c, w) => { try { if (convoSet.has(w) && c.open) c.send({ kind: 'convo-join', id: t.walkId }); } catch (e) {} });
+    pendingWalk.add(t.walkId);
+    convoSet.add(t.walkId);
+    $('btnConvoEnd').hidden = false;
+    applyGains();
+  }));
+});
+$('tapNo').addEventListener('click', () => {
+  $('tapAsk').hidden = true;
+  const t = tapIn; tapIn = null;
+  if (!t) return;
+  const conn = wconns.get(t.walkId);
+  try { if (conn && conn.open) conn.send({ kind: 'tap-busy', reason: 'decline' }); } catch (e) {}
+});
+$('btnConvoEnd').addEventListener('click', () => leaveConvo());
+setInterval(() => {
+  {
+    let g = 0;
+    const me = myPos();
+    if (me && !dnd) {
+      g = distGain(Math.hypot(me.x - radioPos.x, me.z - radioPos.z));
+      if (pairPeer) g = inMeeting() ? PAIR_DUCK : 0;
+      else if (convoSet.size) g *= 0.15;
+    }
+    radioGainNow = g;
+    radioTagEl.textContent = '♪ ' + Math.round(g * 100) + '%';
+    if (ytPlayer && ytReady && ytArmed) { try { ytPlayer.setVolume(Math.round(g * 100)); } catch (e) {} }
+  }
+  let best = null, bd = 2.2;
+  if (fpv) {
+    people.forEach((row) => {
+      if (row.id === myId || !row.walkId) return;
+      if (convoSet.size && convoSet.has(row.walkId)) return;
+      const p = posOf(row);
+      if (!p) return;
+      const d = Math.hypot(fpvPos.x - p.x, fpvPos.z - p.z);
+      if (d < bd) { bd = d; best = row; }
+    });
+  }
+  tapTarget = best;
+  if (tapTarget) { tapTagEl.textContent = 'Vỗ vai ' + tapTarget.name; }
+  if (convoSet.size) {
+    const me = myPos();
+    const near = me && [...convoSet].some((wid) => {
+      const r = rowByWalk(wid), p = r && posOf(r);
+      return p && Math.hypot(me.x - p.x, me.z - p.z) <= HEAR_RANGE * 1.5;
+    });
+    convoFar = near ? 0 : convoFar + 0.25;
+    if (convoFar >= 5) { leaveConvo(); toast('Đi quá xa — đã rời cuộc trò chuyện'); }
+    else applyWalkGains();
+  }
+}, 250);
+
 function sendPresence(msg) {
   if (floorHost) { applyPresence(msg, true); return; }
   if (floorLink && floorLink.open) floorLink.send(msg);
+  else if (msg.kind === 'move') { if (!pendingPresence || pendingPresence.kind === 'move') pendingPresence = msg; }
   else pendingPresence = msg;
 }
 function noteFloor(ok) {
@@ -2942,6 +3367,9 @@ function applyPresence(msg, relay) {
     removeSeat(msg.id);
     if (relay) broadcastFloor(msg);
     refreshScreens();
+  } else if (msg.kind === 'move' && msg.id) {
+    applyPos(msg);
+    if (relay) broadcastFloor(msg);
   } else if (msg.kind === 'roster' && Array.isArray(msg.people)) {
     const keep = new Set(msg.people.map((p) => p.id));
     [...people.keys()].forEach((id) => { if (id !== myId && !keep.has(id)) removeSeat(id); });
@@ -2961,13 +3389,18 @@ function onFloorData(msg, from) {
     applyPresence(msg, true);
     return;
   }
+  if (msg.kind === 'move' && msg.id) {
+    applyPos(msg);
+    if (floorHost) broadcastFloor(msg);
+    return;
+  }
   if (msg.kind === 'gone' && floorHost) { applyPresence(msg, true); return; }
   if (msg.kind === 'say') { onSay(msg, floorHost, false); return; }
   if (msg.kind === 'log' && Array.isArray(msg.items) && !floorHost) {
     msg.items.forEach((item) => onSay(item, false, true));
     return;
   }
-  if (!floorHost && (msg.kind === 'here' || msg.kind === 'gone' || msg.kind === 'roster')) applyPresence(msg, false);
+  if (!floorHost && (msg.kind === 'here' || msg.kind === 'gone' || msg.kind === 'roster' || msg.kind === 'move')) applyPresence(msg, false);
 }
 const HUBS = ['furu-hub-0', 'furu-hub-1', 'furu-hub-2', 'furu-hub-3', 'furu-hub-4', 'furu-hub-5', 'furu-hub-6', 'furu-hub-7'];
 let floorGen = 0;
@@ -3041,7 +3474,9 @@ function becomeClient(gen, p, conn, index) {
   floorHub = index;
   lastBeat = performance.now();
   noteFloor(true);
-  const msg = pendingPresence || (myPresence ? { kind: 'here', who: myPresence } : null);
+  const msg = (pendingPresence && pendingPresence.kind !== 'move')
+    ? pendingPresence
+    : (myPresence ? { kind: 'here', who: myPresence } : pendingPresence);
   pendingPresence = null;
   if (msg) { try { conn.send(msg); } catch (e) {} }
   p.on('disconnected', () => { try { p.reconnect(); } catch (e) {} });
@@ -3124,6 +3559,40 @@ canvas.addEventListener('pointerup', (e) => {
   if (!down) return;
   const dx = e.clientX - down.x, dy = e.clientY - down.y;
   down = null;
+  if (fpv) {
+    if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
+    raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+    const tappable = [];
+    people.forEach((r) => {
+      if (r.id === myId || !r.walkId || !r.body || (convoSet.size && convoSet.has(r.walkId))) return;
+      const p = posOf(r);
+      if (p && Math.hypot(fpvPos.x - p.x, fpvPos.z - p.z) <= 2.2) tappable.push({ row: r, body: r.body });
+    });
+    const bodies = tappable.map(t => t.body);
+    const bh = raycaster.intersectObjects(bodies, true)[0];
+    if (bh) {
+      let o = bh.object, hit = null;
+      while (o && !hit) { hit = tappable.find(t => t.body === o); o = o.parent; }
+      if (hit) { sendTap(hit.row); return; }
+    }
+    const fh = raycaster.intersectObjects(pickers, false)[0];
+    if (fh && fh.object.userData.fish) { exitFpv(); enterFish(); return; }
+    if (fh && fh.object.userData.security) { exitFpv(); enterSecurity(); return; }
+    if (fh) {
+      const isl = fh.object.userData.island, sl = fh.object.userData.slot;
+      const occ = rowAtSeat(isl + 1, sl + 1);
+      if (occ && occ.id !== myId) {
+        const p = posOf(occ);
+        if (occ.walkId && p && Math.hypot(fpvPos.x - p.x, fpvPos.z - p.z) <= 2.2) sendTap(occ);
+        else toast('Lại gần ' + occ.name + ' hơn để vỗ vai');
+        return;
+      }
+      exitFpv(); joinDesk(isl, sl);
+      return;
+    }
+    if (tapTarget) sendTap(tapTarget);
+    return;
+  }
   if (dx * dx + dy * dy > 36) return;
   pointer.x = (e.clientX / innerWidth) * 2 - 1;
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
@@ -3359,7 +3828,13 @@ $('btnDnd').addEventListener('click', () => setDnd(!dnd));
 $('btnPairEnd').addEventListener('click', () => exitPair());
 $('pairYes').addEventListener('click', acceptPair);
 $('pairNo').addEventListener('click', () => { if (pairIn) declinePair(pairIn.pid); else hidePairAsk(); });
-$('btnLeave').addEventListener('click', () => leaveDesk(false));
+$('btnLeave').addEventListener('click', () => {
+  const seat = seatOf(myIsland, mySlot), isl = islandOf(myIsland);
+  const sx = seat ? seat.x : 0, sz = seat ? seat.z : 4, sy = seat ? seat.yaw : Math.PI;
+  leaveDesk(false);
+  const sp = findSpawn(sx, sz, isl);
+  enterFpv(sp.x, sp.z, sy);
+});
 $('btnFish').addEventListener('click', enterFish);
 let menuOpen = true;
 let preferChat = innerWidth > 980;
@@ -3477,12 +3952,23 @@ renderer.setAnimationLoop(() => {
       }
     }
   }
+  if (fpv) fpvTick(dt);
+  people.forEach((row) => {
+    if (row.walk && row.body) {
+      const k = Math.min(1, dt * 12);
+      row.body.position.x += (row.wx - row.body.position.x) * k;
+      row.body.position.z += (row.wz - row.body.position.z) * k;
+      let dy = row.wyaw - row.body.rotation.y;
+      dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+      row.body.rotation.y += dy * k;
+    }
+  });
   if (follow >= 0) {
     const a = AGENTS[follow], fx = Math.sin(a.yaw), fz = Math.cos(a.yaw), kf = 1 - Math.exp(-dt * 2.5);
     tmp.set(a.g.position.x - fx * 2.8, 2.0, a.g.position.z - fz * 2.8); persp.position.lerp(tmp, kf);
     tmp.set(a.g.position.x + fx * 1.0, 0.8, a.g.position.z + fz * 1.0); controls.target.lerp(tmp, kf);
     persp.lookAt(controls.target);
-  } else if (camera === persp && !tween) controls.update();
+  } else if (camera === persp && !tween && !fpv) controls.update();
   else if (camera !== persp) {
     const w = innerWidth, h = innerHeight;
     for (const t of tags) {
