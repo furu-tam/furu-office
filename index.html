@@ -72,6 +72,19 @@
   .dtag.hot b, .dtag.mine b { color: var(--bg); }
   .who, .facename { pointer-events: none; padding: 3px 8px; font-size: 12px; }
   .who.me { border-color: var(--accent); }
+  #bubbles { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+  .bubble {
+    position: absolute; transform: translate(-50%, -100%);
+    max-width: 220px; white-space: normal; text-align: left;
+    font: 600 12.5px/1.35 var(--f-body); color: var(--ink);
+    background: rgba(8, 28, 42, 0.92); border: 1px solid var(--line);
+    border-radius: 12px; padding: 6px 10px 8px;
+  }
+  .bubble b { display: block; color: var(--accent); font-size: 11px; margin-bottom: 2px; }
+  .bubble::after {
+    content: ""; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
+    border: 6px solid transparent; border-top-color: rgba(8, 28, 42, 0.92); border-bottom: 0;
+  }
   .dock button.talk { background: #164e56; border-color: var(--accent); }
   .dock button.off { background: #8a3b32; border-color: #e07060; }
   .mic {
@@ -131,7 +144,7 @@
     background: var(--plate); border: 1px solid var(--line); border-radius: 12px;
     backdrop-filter: blur(10px); overflow: hidden;
   }
-  body.in-room.chat-open .chat { display: flex; }
+  body.chat-open .chat { display: flex; }
   .chat h3 { margin: 0; padding: 12px 14px; font-size: 14px; border-bottom: 1px solid var(--line); }
   .chat .msgs { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
   .msg { font-size: 13.5px; line-height: 1.45; overflow-wrap: anywhere; }
@@ -210,6 +223,7 @@
 <div id="labels" hidden></div>
 <div id="deskTags"></div>
 <div id="faces"></div>
+<div id="bubbles"></div>
 <div class="plate">
   <h1>Văn Phòng <span>furuCRM</span></h1>
   <p>Tầng 3 · sàn 26 × 16 m · 44 chỗ ngồi<br>Ban công 26 m hướng biển · 2 nap pod · 6 agent</p>
@@ -221,11 +235,11 @@
   <div class="conn" id="connStatus"><span class="dot"></span><span id="connText">Ngồi cùng đảo là nói chuyện được với đồng nghiệp</span></div>
 </div>
 <div id="selfWrap"><video id="selfVideo" autoplay playsinline muted></video><div class="ph" id="selfPh">?</div><span>Bạn</span></div>
-<aside class="chat" aria-label="Chat trong đảo">
-  <h3 id="roomTitle">Đảo</h3>
+<aside class="chat" aria-label="Chat cả phòng">
+  <h3 id="roomTitle">Cả phòng</h3>
   <div class="msgs" id="chatMsgs"></div>
   <form id="chatForm">
-    <input id="chatInput" type="text" maxlength="300" placeholder="Nhắn cho cả đảo…" autocomplete="off" />
+    <input id="chatInput" type="text" maxlength="300" placeholder="Nhắn cho cả phòng…" autocomplete="off" />
     <button type="submit">Gửi</button>
   </form>
 </aside>
@@ -1499,6 +1513,10 @@ scene.add(ring);
 const $ = (id) => document.getElementById(id);
 const _pt = new THREE.Vector3();
 const people = new Map();
+const bubbles = new Map();
+const bubblesEl = document.getElementById('bubbles');
+const roomLog = [];
+const seenSay = new Set();
 let myId = rid(9);
 let mySlot = 0;
 let myPresence = null;
@@ -1622,6 +1640,8 @@ function removeSeat(id) {
   setProp(row.table, row.slot, true);
   if (row.body) G.people.remove(row.body);
   row.el.remove();
+  const bubble = bubbles.get(id);
+  if (bubble) { bubble.el.remove(); bubbles.delete(id); }
   people.delete(id);
 }
 function rosterList() {
@@ -1690,6 +1710,25 @@ function placeOffice() {
       tag.style.top = ((1 - _pt.y) / 2 * h) + 'px';
     });
   }
+  placeBubbles(w, h);
+}
+function placeBubbles(w, h) {
+  const hide = camera !== persp || watchingFish || inSecurity;
+  bubblesEl.hidden = hide;
+  if (hide) return;
+  const now = performance.now();
+  bubbles.forEach((b, id) => {
+    if (now > b.until) { b.el.remove(); bubbles.delete(id); return; }
+    const row = people.get(id);
+    const seat = row && seatOf(row.table, row.slot);
+    if (!seat) { b.el.hidden = true; return; }
+    _pt.set(seat.x, 1.9 + (seat.y || 0), seat.z).project(camera);
+    b.el.hidden = _pt.z > 1;
+    const head = (1 - _pt.y) / 2 * h;
+    const top = head > 72 ? head - 4 : Math.min(h - 16, head + 78);
+    b.el.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+    b.el.style.top = top + 'px';
+  });
 }
 function sitCamera(seat) {
   camera = persp;
@@ -1768,9 +1807,8 @@ function enterDesk(index, slot) {
   $('btnHear').hidden = true;
   $('btnMic').hidden = quiet;
   $('btnCam').hidden = quiet;
-  $('btnChat').hidden = quiet;
+  $('btnChat').hidden = false;
   $('btnLeave').textContent = quiet ? 'Rời chỗ' : 'Rời bàn';
-  $('roomTitle').textContent = island.label + ' · ' + island.zone;
   $('hint').textContent = quiet
     ? 'Đang ngồi ' + island.label + ' · chỗ ' + slot + '/' + island.seats.length + ' · ngồi chơi'
     : island.share
@@ -1779,19 +1817,18 @@ function enterDesk(index, slot) {
   $('btnShare').hidden = quiet || !island.share;
   $('btnTv').hidden = true;
   if (!quiet) {
-    $('chatMsgs').innerHTML = '';
     sysMsg(island.share
       ? 'Bạn đã vào phòng họp, chỗ ' + slot + '. Bấm Bật tiếng để nói, hoặc Chia sẻ màn hình để chiếu lên TV.'
       : 'Bạn đã ngồi ' + island.label + ', chỗ ' + slot + '. Bấm Bật tiếng để nói với cả đảo.');
   }
-  toast(quiet ? 'Đã ngồi chơi. Mic, camera và chat đang tắt.' : island.share ? 'Đã vào phòng họp.' : 'Đã ngồi. Bấm Bật tiếng khi muốn nói.', 3200);
+  toast(quiet ? 'Đã ngồi chơi. Mic và camera tắt. Chat cả phòng vẫn dùng được.' : island.share ? 'Đã vào phòng họp.' : 'Đã ngồi. Bấm Bật tiếng khi muốn nói.', 3200);
   updateSelf();
   syncControlButtons();
   refreshScreens();
   ring.visible = false;
   announceSeat();
   sitCamera(island.seats[slot - 1]);
-  if (quiet) setConn('on', 'Chỗ ngồi chơi, không bật mic hay chat');
+  if (quiet) setConn('on', 'Chỗ ngồi chơi, không bật mic hay camera');
   else openTablePeer();
 }
 function leaveDesk(silent) {
@@ -2269,14 +2306,65 @@ function sysMsg(text) {
 }
 function onChat(cm) {
   if (!cm || cm.kind !== 'msg' || !cm.text) return;
+  appendChat(cm.from, cm.name, cm.text, false);
+}
+function appendChat(from, name, text, note) {
   const box = $('chatMsgs');
-  const mine = cm.from === myId;
+  const mine = from === myId;
+  const row = people.get(from);
+  const island = row && islandOf(row.table);
+  const place = island ? ' · ' + island.label : '';
   const m = document.createElement('div');
   m.className = 'msg' + (mine ? ' me' : '');
-  m.innerHTML = '<span class="who-name">' + esc(mine ? 'Bạn' : (cm.name || 'Đồng nghiệp')) + ':</span> ' + esc(cm.text);
+  m.innerHTML = '<span class="who-name">' + esc(mine ? 'Bạn' : (name || 'Đồng nghiệp')) + esc(place) + ':</span> ' + esc(text);
   box.appendChild(m);
+  while (box.children.length > 80) box.removeChild(box.firstChild);
   box.scrollTop = box.scrollHeight;
-  if (!mine && !document.body.classList.contains('chat-open')) setChatNote(unreadChat + 1);
+  if (note && !mine && !document.body.classList.contains('chat-open')) setChatNote(unreadChat + 1);
+}
+function showBubble(from, name, text) {
+  if (!people.has(from)) return;
+  let b = bubbles.get(from);
+  if (!b) {
+    const el = document.createElement('div');
+    el.className = 'bubble';
+    bubblesEl.appendChild(el);
+    b = { el };
+    bubbles.set(from, b);
+  }
+  b.until = performance.now() + 7000;
+  const mine = from === myId;
+  b.el.innerHTML = '<b>' + esc(mine ? 'Bạn' : (name || 'Đồng nghiệp')) + '</b>' + esc(String(text).slice(0, 140));
+  b.el.hidden = false;
+}
+function onSay(msg, relay, fromLog) {
+  if (!msg || !msg.id || !msg.text) return;
+  const text = String(msg.text).slice(0, 300);
+  const id = String(msg.id);
+  const fresh = !seenSay.has(id);
+  if (fresh) {
+    seenSay.add(id);
+    if (seenSay.size > 120) seenSay.delete(seenSay.values().next().value);
+    const entry = { id, from: msg.from, name: msg.name, text };
+    roomLog.push(entry);
+    if (roomLog.length > 30) roomLog.shift();
+    appendChat(msg.from, msg.name, text, !fromLog);
+    if (!fromLog) showBubble(msg.from, msg.name, text);
+  }
+  if (relay && floorHost) broadcastFloor({ kind: 'say', id, from: msg.from, name: msg.name, text });
+}
+function sendSay(text) {
+  const msg = {
+    kind: 'say',
+    id: myId + '-' + Date.now().toString(36),
+    from: myId,
+    name: myName(),
+    text: String(text).slice(0, 300)
+  };
+  onSay(msg, floorHost, false);
+  if (floorHost) return;
+  if (floorLink && floorLink.open) floorLink.send(msg);
+  else toast('Đang nối phòng, gửi lại sau giây lát.');
 }
 let unreadChat = 0;
 function setChatNote(n) {
@@ -2576,6 +2664,11 @@ function onFloorData(msg, from) {
     return;
   }
   if (msg.kind === 'gone' && floorHost) { applyPresence(msg, true); return; }
+  if (msg.kind === 'say') { onSay(msg, floorHost, false); return; }
+  if (msg.kind === 'log' && Array.isArray(msg.items) && !floorHost) {
+    msg.items.forEach((item) => onSay(item, false, true));
+    return;
+  }
   if (!floorHost && (msg.kind === 'here' || msg.kind === 'gone' || msg.kind === 'roster')) applyPresence(msg, false);
 }
 function destroyFloor() {
@@ -2609,7 +2702,10 @@ function claimFloor() {
       floorHost = true;
       p.on('connection', (conn) => {
         floorConns.push(conn);
-        conn.on('open', () => { conn.send({ kind: 'roster', people: rosterList() }); });
+        conn.on('open', () => {
+          conn.send({ kind: 'roster', people: rosterList() });
+          if (roomLog.length) conn.send({ kind: 'log', items: roomLog.slice(-30) });
+        });
         conn.on('data', (msg) => onFloorData(msg, conn));
         conn.on('close', () => {
           floorConns = floorConns.filter((c) => c !== conn);
@@ -2861,8 +2957,8 @@ let preferChat = innerWidth > 980;
 try { menuOpen = localStorage.getItem('furu-office-menu') !== '0'; } catch (e) {}
 function applyChrome() {
   document.body.classList.toggle('menu-hidden', !menuOpen);
-  document.body.classList.toggle('chat-open', myIsland !== 0 && preferChat && !seatedQuiet());
-  $('btnChatToggle').hidden = seatedQuiet();
+  document.body.classList.toggle('chat-open', preferChat);
+  $('btnChatToggle').hidden = false;
   $('btnMenu').textContent = menuOpen ? 'Ẩn menu' : 'Hiện menu';
   $('btnMenu').setAttribute('aria-pressed', String(menuOpen));
   const chatOn = document.body.classList.contains('chat-open');
@@ -2876,8 +2972,6 @@ function toggleMenu() {
   applyChrome();
 }
 function toggleChat() {
-  if (myIsland === 0) { toast('Ngồi vào một bàn để mở chat.'); return; }
-  if (seatedQuiet()) { toast('Chỗ này chỉ để ngồi chơi.'); return; }
   preferChat = !document.body.classList.contains('chat-open');
   if (preferChat) clearChatNote();
   applyChrome();
@@ -2889,9 +2983,8 @@ $('btnChat').addEventListener('click', toggleChat);
 $('chatForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const v = $('chatInput').value.trim();
-  if (!v || myIsland === 0) return;
-  onChat({ kind: 'msg', from: myId, name: myName(), text: v.slice(0, 300) });
-  broadcast({ kind: 'msg', text: v.slice(0, 300) });
+  if (!v) return;
+  sendSay(v);
   $('chatInput').value = '';
 });
 try {
