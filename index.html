@@ -212,7 +212,7 @@
 <div id="faces"></div>
 <div class="plate">
   <h1>Văn Phòng <span>furuCRM</span></h1>
-  <p>Tầng 3 · sàn 26 × 16 m · 44 chỗ ngồi<br>Ban công 26 m hướng biển · 2 nap pod</p>
+  <p>Tầng 3 · sàn 26 × 16 m · 44 chỗ ngồi<br>Ban công 26 m hướng biển · 2 nap pod · 6 agent</p>
   <p class="hint" id="hint">Bấm một bàn để ngồi · kéo để xoay</p>
   <div class="row">
     <label for="nameInput">Tên</label>
@@ -240,6 +240,7 @@
   <button id="vcafe" type="button" aria-pressed="false">Góc cà phê</button>
   <button id="vlounge" type="button" aria-pressed="false">Góc nghỉ</button>
   <button id="btnFish" type="button" aria-pressed="false">Ngắm cá</button>
+  <button id="vagent" type="button" aria-pressed="false">Theo agent</button>
 </div>
 <div class="dock" id="dockRoom" hidden>
   <button type="button" class="talk" id="btnTalk">Bật tiếng</button>
@@ -554,6 +555,15 @@ function seated(parent, x, z, yaw, y0 = 0) {
   const hair = new THREE.Mesh(new THREE.SphereGeometry(0.115, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), pick(HAIR)); hair.position.copy(head.position).add(new THREE.Vector3(0, 0.01, -0.01)); g.add(hair);
   for (const s of [-1, 1]) { const a = box(0.08, 0.08, 0.34, shirt, s * 0.2, 0.86, 0.12, g); a.rotation.x = 0.25; }
   parent.add(g); return g;
+}
+function walkerModel() {
+  const g = new THREE.Group(); const shirt = SHIRTS[1], pants = PANTS[0];
+  const legs = [-1, 1].map(s => { const pivot = new THREE.Group(); pivot.position.set(s * 0.1, 0.84, 0); box(0.12, 0.82, 0.14, pants, 0, -0.41, 0, pivot); g.add(pivot); return pivot; });
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.36, 4, 10), shirt); torso.position.y = 1.2; torso.castShadow = true; g.add(torso);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 10), SKIN[1]); head.position.y = 1.62; head.castShadow = true; g.add(head);
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.115, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), HAIR[0]); hair.position.y = 1.63; g.add(hair);
+  const mug = cyl(0.04, 0.035, 0.1, mat.white, 0.24, 1.0, 0.12, g, 12);
+  return { g, legs, mug };
 }
 function officeChair(parent, x, z, yaw) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = yaw;
@@ -904,9 +914,9 @@ function sofa(parent, x, z, len, yaw) {
 }
 {
   const l = G.lounge;
-  const rug = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 4.2), mat.rug); rug.rotation.x = -Math.PI / 2; rug.position.set(7.5, 0.012, -5.5); rug.receiveShadow = true; l.add(rug);
+  const rug = new THREE.Mesh(new THREE.PlaneGeometry(7, 4.2), mat.rug); rug.rotation.x = -Math.PI / 2; rug.position.set(8.4, 0.012, -5.5); rug.receiveShadow = true; l.add(rug);
   sofa(l, 8.2, -3.4, 5.0, Math.PI);
-  sofa(l, 9.15, -5.6, 3.2, -Math.PI / 2);
+  sofa(l, 11.9, -5.6, 3.2, -Math.PI / 2);
   box(1.6, 0.05, 0.8, mat.walnut, 8.4, 0.38, -5.5, l);
   for (const sx of [-0.7, 0.7]) box(0.05, 0.36, 0.7, mat.frame, 8.4 + sx, 0.18, -5.5, l);
   cyl(0.04, 0.035, 0.1, mat.white, 8.1, 0.45, -5.4, l, 12);
@@ -928,7 +938,7 @@ function sofa(parent, x, z, len, yaw) {
   startIsland('Giải lao', 'ngồi chơi');
   islandCursor.quiet = true;
   for (const x of [6.6, 8.2, 9.8]) addOpenSeat(x, -3.55, Math.PI, l, -0.1, true);
-  for (const z of [-6.25, -4.95]) addOpenSeat(9.2, z, -Math.PI / 2, l, -0.1, true);
+  for (const z of [-6.4, -4.8]) addOpenSeat(11.35, z, -Math.PI / 2, l, -0.1, true);
   for (const [x, z] of [[6.1, -6.9], [7.6, -7.25], [9.3, -7.05]]) addOpenSeat(x, z, Math.atan2(8.4 - x, -5.5 - z), l, -0.12, true);
   addOpenSeat(4.8, -4.5, 0, l, 0.08, true);
   const lounge = islandCursor;
@@ -1250,32 +1260,32 @@ fishTag = { el: fishBtn, v: new THREE.Vector3(-1.45, 1.92, 6.9) };
 }
 
 // ---------- plants inside ----------
-for (const [x, z, s] of [[-4.8, -7.5, 1.1], [4.4, -7.5, 1.1], [9.7, -7.75, 0.85], [-7.4, 2, 1], [6.8, 2, 1], [0, 7.4, 0.9], [-0.3, 2, 0.8], [8.5, 2.4, 0.9], [-12.4, -0.9, 0.8]]) plant(x, z, s);
+for (const [x, z, s] of [[-4.8, -7.5, 1.1], [4.4, -7.5, 1.1], [12.5, -7.6, 1.2], [-8.6, 6.8, 1], [6.8, 0.6, 1], [0, 7.4, 0.9], [-12.4, 3.4, 0.8], [8.5, 2.4, 0.9], [-12.4, -0.9, 0.8]]) plant(x, z, s);
 
-// ---------- security room: right sea corner ----------
+// ---------- security room: right wall, between nap room and lounge ----------
 {
   const sec = G.security;
-  glassWall(10.7, -7.95, 10.7, -6.4, 2.6, sec, mat.glass, 1.15);
-  glassWall(10.7, -5.2, 10.7, -4.55, 2.6, sec, mat.glass, 1.15);
-  glassWall(10.7, -4.55, 13, -4.55, 2.6, sec, mat.glass, 1.3);
-  const pad = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.3), M(0x16343c, 0.9));
-  pad.rotation.x = -Math.PI / 2; pad.position.set(11.85, 0.012, -6.25); pad.receiveShadow = true; sec.add(pad);
-  box(1.45, 0.04, 0.7, mat.deskTop, 12.35, 0.74, -6.85, sec);
-  for (const sx of [-0.66, 0.66]) box(0.04, 0.72, 0.6, mat.deskLeg, 12.35 + sx, 0.36, -6.85, sec);
-  box(1.15, 0.62, 0.04, mat.monitor, 12.35, 1.25, -7.12, sec);
+  glassWall(11.85, -3.9, 11.85, -3.25, 2.6, sec, mat.glass, 1.15);
+  glassWall(11.85, -2.75, 11.85, -2.5, 2.6, sec, mat.glass, 1.15);
+  glassWall(11.85, -3.9, 13, -3.9, 2.6, sec, mat.glass, 1.3);
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.35), M(0x16343c, 0.9));
+  pad.rotation.x = -Math.PI / 2; pad.position.set(12.42, 0.012, -3.2); pad.receiveShadow = true; sec.add(pad);
+  box(0.55, 0.04, 0.9, mat.deskTop, 12.5, 0.74, -3.2, sec);
+  for (const sz of [-0.38, 0.38]) box(0.48, 0.72, 0.04, mat.deskLeg, 12.5, 0.36, -3.2 + sz, sec);
+  box(0.04, 0.55, 0.8, mat.monitor, 12.74, 1.18, -3.2, sec);
   const secTex = canvasTex(512, 256, (g, w, h) => {
     g.fillStyle = '#102028'; g.fillRect(0, 0, w, h);
     g.fillStyle = '#3fd0c0'; g.font = '700 54px sans-serif'; g.textAlign = 'center';
     g.fillText('SECURITY', w / 2, 108);
     g.fillStyle = '#d5e4e8'; g.font = '400 28px sans-serif'; g.fillText('tra cứu', w / 2, 164);
   }, 'security_sign');
-  plane(1.05, 0.52, new THREE.MeshBasicMaterial({ map: secTex }), 12.35, 1.25, -7.09, 0, sec);
-  officeChair(sec, 12.35, -6.15, Math.PI);
+  plane(0.72, 0.46, new THREE.MeshBasicMaterial({ map: secTex }), 12.68, 1.18, -3.2, -Math.PI / 2, sec);
+  officeChair(sec, 12.05, -3.2, Math.PI / 2);
   const picker = new THREE.Mesh(
-    new THREE.BoxGeometry(2.15, 1.7, 3.2),
+    new THREE.BoxGeometry(1.1, 1.7, 1.3),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })
   );
-  picker.position.set(11.85, 1.05, -6.25);
+  picker.position.set(12.42, 1.05, -3.2);
   picker.userData.security = true;
   sec.add(picker);
   pickers.push(picker);
@@ -1286,7 +1296,121 @@ for (const [x, z, s] of [[-4.8, -7.5, 1.1], [4.4, -7.5, 1.1], [9.7, -7.75, 0.85]
   el.title = 'Mở trang tra cứu';
   el.addEventListener('click', (e) => { e.stopPropagation(); enterSecurity(); });
   deskTagsEl.appendChild(el);
-  securityTag = { el, v: new THREE.Vector3(11.85, 1.85, -6.25) };
+  securityTag = { el, v: new THREE.Vector3(12.42, 1.85, -3.2) };
+}
+
+// ---------- AI agents: hovering robots that patrol the aisles ----------
+const AGENTS = [];
+{
+  const agentsG = new THREE.Group(); agentsG.name = 'agents'; scene.add(agentsG);
+  const shell = M(0xf2f4f3, 0.32, { metalness: 0.15 });
+  const visorM = M(0x0b141c, 0.15, { metalness: 0.4 });
+  const PI = Math.PI;
+  function drawTag(c, name, role, col) {
+    const g = c.getContext('2d'), w = c.width, h = c.height;
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = 'rgba(8,28,42,0.88)'; g.beginPath(); g.roundRect(4, 4, w - 8, h - 8, 20); g.fill();
+    g.strokeStyle = col; g.lineWidth = 4; g.stroke();
+    g.fillStyle = col; g.beginPath(); g.arc(36, h / 2, 11, 0, 7); g.fill();
+    g.fillStyle = '#f3f8f8'; g.font = '700 32px "Be Vietnam Pro", system-ui, sans-serif'; g.fillText('Agent ' + name, 60, 44);
+    g.fillStyle = '#a8c1c9'; g.font = '400 23px "Be Vietnam Pro", system-ui, sans-serif'; g.fillText(role, 60, 76);
+  }
+  const DEFS = [
+    { name: 'Review', role: 'review code', hex: 0x3fd0c0, speed: 0.9, start: 0,
+      route: [[-7.2, -2.75, 1.2], [7.6, -2.75, 1.2], [7.6, 5.9, 1.2], [-7.2, 5.9, 1.2]] },
+    { name: 'QA', role: 'kiểm thử', hex: 0xff8a5b, speed: 1.0, start: 2,
+      route: [[-7.2, -2.75, 1], [-7.2, 5.9, 1], [7.6, 5.9, 1], [7.6, -2.75, 1]] },
+    { name: 'Barista', role: 'mang cà phê', hex: 0xffb067, speed: 1.1, start: 1,
+      route: [[2.0, 2.1, 2.5, PI, 'drop'], [-7.2, 2.1], [-10.9, 2.1], [-10.9, -3.2], [-11.55, -5.6, 3.5, -PI / 2, 'pick'], [-10.9, -3.2], [-10.9, 2.1], [-7.2, 2.1]] },
+    { name: 'Deploy', role: 'triển khai', hex: 0x9a7cff, speed: 0.8, start: 3,
+      route: [[-0.5, -2.75], [-0.5, 5.9], [7.6, 5.9], [7.6, 2.1], [-7.2, 2.1, 1.5], [-7.2, -2.75]] },
+    { name: 'Docs', role: 'viết tài liệu', hex: 0xf2d94e, speed: 0.7, start: 0,
+      route: [[-5.8, -4.6], [-0.5, -4.6, 3.5, PI], [3.8, -4.6], [3.8, -2.75], [-5.8, -2.75]] },
+    { name: 'Ops', role: 'giám sát server', hex: 0x4aa8ff, speed: 0.95, start: 1,
+      route: [[-0.5, -2.75], [-0.5, 5.9], [-7.2, 5.9], [-7.2, 3.3], [-11.0, 3.5, 3.5, 0], [-7.2, 3.3], [-7.2, 2.1], [-0.5, 2.1]] },
+  ];
+  for (const d of DEFS) {
+    const col = '#' + d.hex.toString(16).padStart(6, '0');
+    const g = new THREE.Group(); g.rotation.order = 'YXZ'; agentsG.add(g);
+    const body = new THREE.Group(); g.add(body);
+    const accent = new THREE.MeshStandardMaterial({ color: d.hex, emissive: d.hex, emissiveIntensity: 1.2, roughness: 0.4 });
+    const add = (geo, m, x, y, z, parent = body) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o; };
+    add(new THREE.CapsuleGeometry(0.19, 0.2, 6, 18), shell, 0, 0.42, 0).scale.z = 0.88;
+    const belt = add(new THREE.TorusGeometry(0.19, 0.018, 8, 32), accent, 0, 0.36, 0); belt.rotation.x = PI / 2; belt.scale.y = 0.88;
+    add(new THREE.BoxGeometry(0.1, 0.035, 0.02), accent, 0, 0.5, 0.17);
+    const head = new THREE.Group(); head.position.y = 0.9; body.add(head);
+    add(new THREE.SphereGeometry(0.23, 28, 20), shell, 0, 0, 0, head).scale.set(1.15, 0.9, 1);
+    add(new THREE.SphereGeometry(0.2, 28, 18), visorM, 0, 0, 0.13, head).scale.set(1.1, 0.72, 0.6);
+    const eyeM = new THREE.MeshBasicMaterial({ color: new THREE.Color(d.hex).lerp(new THREE.Color(0xffffff), 0.45) });
+    const eyes = [-1, 1].map(s => { const e = new THREE.Mesh(new THREE.CapsuleGeometry(0.024, 0.045, 4, 8), eyeM); e.position.set(s * 0.075, 0.01, 0.245); head.add(e); return e; });
+    add(new THREE.CylinderGeometry(0.008, 0.008, 0.14, 6), visorM, 0, 0.25, 0, head);
+    add(new THREE.SphereGeometry(0.032, 12, 10), accent, 0, 0.33, 0, head);
+    for (const s of [-1, 1]) add(new THREE.CylinderGeometry(0.06, 0.06, 0.04, 18), accent, s * 0.26, 0, 0, head).rotation.z = PI / 2;
+    const hands = [-1, 1].map(s => add(new THREE.SphereGeometry(0.065, 16, 12), shell, s * 0.29, 0.42, 0.02));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.27, 32), new THREE.MeshBasicMaterial({ color: d.hex, transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending }));
+    ring.rotation.x = -PI / 2; ring.position.y = 0.02; g.add(ring);
+    const cup = new THREE.Group(); cup.position.set(-0.29, 0.53, 0.06); cup.visible = false; body.add(cup);
+    add(new THREE.CylinderGeometry(0.045, 0.036, 0.11, 14), mat.white, 0, 0, 0, cup);
+    add(new THREE.CylinderGeometry(0.048, 0.048, 0.015, 14), mat.coral, 0, 0.06, 0, cup);
+    const tc = document.createElement('canvas'); tc.width = 320; tc.height = 96;
+    drawTag(tc, d.name, d.role, col);
+    const tex = new THREE.CanvasTexture(tc); tex.colorSpace = THREE.SRGBColorSpace;
+    document.fonts?.ready.then(() => { drawTag(tc, d.name, d.role, col); tex.needsUpdate = true; });
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false })); tag.scale.set(0.9, 0.27, 1); tag.position.y = 1.5; g.add(tag);
+    const route = d.route.map(([x, z, pause = 0, face = null, act = null]) => ({ p: new THREE.Vector2(x, z), pause, face, act }));
+    const s0 = route[d.start], next = route[(d.start + 1) % route.length];
+    const dir = next.p.clone().sub(s0.p).normalize();
+    AGENTS.push({ d, g, body, head, eyes, hands, ring, cup, accent, route,
+      idx: (d.start + 1) % route.length, pos: s0.p.clone(), dir, off: new THREE.Vector2(),
+      yaw: Math.atan2(dir.x, dir.y), wait: 0, faceYaw: null, act: null, moving: true, ph: rng() * 6.28, blink: rr(1, 4) });
+  }
+}
+const laneV = new THREE.Vector2();
+function updateAgents(dt, t) {
+  const k = 1 - Math.exp(-dt * 4);
+  for (const a of AGENTS) {
+    let wantYaw = a.yaw;
+    if (a.wait > 0) {
+      a.wait -= dt; a.moving = false;
+      if (a.faceYaw !== null) wantYaw = a.faceYaw;
+      if (a.wait <= 0 && a.act) { a.cup.visible = a.act === 'pick'; a.act = null; }
+    } else {
+      const tgt = a.route[a.idx], v = tgt.p.clone().sub(a.pos), dist = v.length(), step = a.d.speed * dt;
+      if (dist <= step) {
+        a.pos.copy(tgt.p);
+        if (tgt.pause) { a.wait = tgt.pause; a.faceYaw = tgt.face; a.act = tgt.act; }
+        a.idx = (a.idx + 1) % a.route.length;
+      } else {
+        v.divideScalar(dist); a.pos.addScaledVector(v, step); a.dir.copy(v); a.moving = true;
+        wantYaw = Math.atan2(v.x, v.y);
+      }
+    }
+    a.off.lerp(laneV.set(-a.dir.y, a.dir.x).multiplyScalar(a.moving ? 0.18 : 0), k);
+    let diff = wantYaw - a.yaw; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    a.yaw += diff * Math.min(1, dt * 6);
+    a.g.position.set(a.pos.x + a.off.x, 0, a.pos.y + a.off.y);
+    a.g.rotation.y = a.yaw;
+    a.g.rotation.x += ((a.moving ? 0.1 : 0) - a.g.rotation.x) * k;
+    a.body.position.y = 0.1 + Math.sin(t * 2.4 + a.ph) * 0.035;
+    a.hands.forEach((h, i) => { h.position.z = 0.02 + (a.moving ? Math.sin(t * 7 + a.ph + i * Math.PI) * 0.06 : 0); });
+    a.head.rotation.y += ((a.wait > 0 ? Math.sin(t * 1.5 + a.ph) * 0.4 : 0) - a.head.rotation.y) * k;
+    a.blink -= dt;
+    let ey = a.wait > 0 ? 0.45 : 1;
+    if (a.blink < 0) { ey = 0.1; if (a.blink < -0.12) a.blink = rr(2, 5); }
+    a.eyes.forEach(e => { e.scale.y += (ey - e.scale.y) * Math.min(1, dt * 20); });
+    a.accent.emissiveIntensity = 1 + 0.8 * (0.5 + 0.5 * Math.sin(t * (a.wait > 0 ? 9 : 3) + a.ph));
+    a.ring.material.opacity = 0.3 + 0.12 * Math.sin(t * 2.4 + a.ph);
+  }
+}
+const walker = walkerModel(); G.people.add(walker.g);
+const PATH = [[1.4, 2], [-8, 2], [-10.9, 1.4], [-10.9, -3.2], [-11.75, -4.4]].map(([x, z]) => new THREE.Vector2(x, z));
+const CUM = [0]; for (let i = 1; i < PATH.length; i++) CUM.push(CUM[i - 1] + PATH[i].distanceTo(PATH[i - 1]));
+const PATH_LEN = CUM[CUM.length - 1];
+const walk = { d: 0, dir: 1, pause: 2 };
+function pathAt(d) {
+  let i = 1; while (i < CUM.length - 1 && CUM[i] < d) i++;
+  const t = (d - CUM[i - 1]) / (CUM[i] - CUM[i - 1]);
+  return { p: PATH[i - 1].clone().lerp(PATH[i], t), dir: PATH[i].clone().sub(PATH[i - 1]).normalize() };
 }
 
 // ---------- zone labels (plan view) ----------
@@ -1302,7 +1426,7 @@ const ZONES = [
   ['Phòng server', '4 rack', [-11.2, 1, 6.1]],
   ['Lễ tân', 'lối vào · hồ thủy sinh 120', [-1.45, 1, 6.6]],
   ['Ban công', 'ghế nằm · bàn cà phê', [2, 1, -9.4], 'warm'],
-  ['Security', 'tra cứu', [11.85, 1, -6.25]],
+  ['Security', 'tra cứu', [12.42, 1, -3.2]],
 ];
 const labelsEl = document.getElementById('labels');
 const tags = ZONES.map(([n, s, p, cls]) => {
@@ -1316,15 +1440,29 @@ const VIEWS = {
   v3d: { p: [-17, 14, -24], t: [0, 0, 0] },
   vsea: { p: [0.7, 1.22, -5.75], t: [0.7, 0.75, -11.5] },
   vcafe: { p: [-5.0, 2.3, -0.4], t: [-10.6, 0.9, -5.4] },
-  vlounge: { p: [4.6, 2.4, 0.6], t: [9.0, 0.6, -5.6] },
+  vlounge: { p: [4.6, 2.4, 0.6], t: [9.8, 0.6, -5.6] },
 };
 let tween = null;
+let follow = -1;
 let myIsland = 0;
 let hoveredIsland = -1;
 const buttons = [...document.querySelectorAll('#dockView button')];
 function go(id) {
   endFishWatch();
+  if (id !== 'vagent') follow = -1;
   buttons.forEach(b => b.setAttribute('aria-pressed', String(b.id === id)));
+  if (id === 'vagent') {
+    if (inSecurity) leaveSecurity();
+    if (myIsland !== 0) {
+      toast('Rời bàn trước khi theo agent.');
+      buttons.forEach(b => b.setAttribute('aria-pressed', 'false'));
+      return;
+    }
+    follow = (follow + 1) % AGENTS.length;
+    camera = persp; controls.enabled = false; labelsEl.hidden = true; tween = null;
+    document.getElementById('hint').textContent = 'Đang theo Agent ' + AGENTS[follow].d.name + ' · bấm lại để đổi agent';
+    return;
+  }
   if (id === 'vplan') {
     camera = ortho; controls.enabled = false; labelsEl.hidden = false; tween = null;
     document.getElementById('hint').textContent = 'Mặt bằng nhìn từ trên · bấm một đảo để ngồi';
@@ -1617,6 +1755,7 @@ function joinDesk(index, prefer) {
 }
 function enterDesk(index, slot) {
   endFishWatch();
+  follow = -1;
   myIsland = index + 1;
   mySlot = slot;
   const island = islands[index];
@@ -2592,6 +2731,7 @@ addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (watchingFish) { leaveFish(); return; }
   if (inSecurity) { leaveSecurity(); return; }
+  if (follow >= 0) { go('v3d'); return; }
   if (!$('tvFull').hidden) closeTvFull();
 });
 function endFishWatch() {
@@ -2605,6 +2745,7 @@ function endFishWatch() {
   if (fishBtn) fishBtn.setAttribute('aria-pressed', 'false');
 }
 function enterFish() {
+  follow = -1;
   if (myIsland !== 0) { toast('Rời bàn trước khi ngắm cá.'); return; }
   if (inSecurity) return;
   if (AQ.feed) AQ.feed();
@@ -2640,6 +2781,7 @@ function leaveFish() {
 }
 function enterSecurity() {
   endFishWatch();
+  follow = -1;
   if (inSecurity) return;
   if (myIsland !== 0) { toast('Rời bàn trước khi vào Security.'); return; }
   inSecurity = true;
@@ -2648,8 +2790,8 @@ function enterSecurity() {
   labelsEl.hidden = true;
   ring.visible = false;
   securityPose = { p: persp.position.clone(), t: controls.target.clone() };
-  const eye = new THREE.Vector3(9.05, 1.62, -6.45);
-  const look = new THREE.Vector3(12.35, 1.15, -6.7);
+  const eye = new THREE.Vector3(10.15, 1.62, -3.2);
+  const look = new THREE.Vector3(12.55, 1.15, -3.2);
   if (REDUCED) { persp.position.copy(eye); controls.target.copy(look); tween = null; }
   else tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1: eye, t1: look, s: 0 };
   const frame = $('secureFrame');
@@ -2786,6 +2928,7 @@ renderer.setAnimationLoop(() => {
   boat.position.x = -60 + ((T.value * 1.2) % 140); boat.rotation.z = Math.sin(T.value * 0.9) * 0.04;
   rackMats.forEach((m, i) => { m.emissiveIntensity = 1.0 + 0.35 * Math.sin(T.value * (5 + i) + i); });
   AQ.update(dt);
+  updateAgents(dt, T.value);
   for (const b of gulls) {
     b.a += b.speed * dt;
     const ca = Math.cos(b.a), sa = Math.sin(b.a);
@@ -2800,6 +2943,21 @@ renderer.setAnimationLoop(() => {
       w.outer.rotation.z = w.s * (Math.sin(f - 0.7) * amp * 0.8 - (glide ? 0.12 : 0));
     }
   }
+
+  let moving = false;
+  if (walk.pause > 0) walk.pause -= dt;
+  else {
+    walk.d += walk.dir * dt * 1.15; moving = true;
+    if (walk.d >= PATH_LEN) { walk.d = PATH_LEN; walk.dir = -1; walk.pause = 4; }
+    if (walk.d <= 0) { walk.d = 0; walk.dir = 1; walk.pause = 6; }
+  }
+  const step = pathAt(walk.d);
+  walker.g.position.set(step.p.x, 0, step.p.y);
+  const fx = step.dir.x * walk.dir, fz = step.dir.y * walk.dir;
+  walker.g.rotation.y = Math.atan2(fx, fz);
+  const sw = moving ? Math.sin(T.value * 7.5) * 0.45 : 0;
+  walker.legs[0].rotation.x = sw; walker.legs[1].rotation.x = -sw;
+  walker.mug.visible = walk.dir < 0 || (walk.d >= PATH_LEN - 0.01);
 
   if (tween) {
     tween.s = Math.min(1, tween.s + dt / 1.4);
@@ -2817,7 +2975,12 @@ renderer.setAnimationLoop(() => {
       }
     }
   }
-  if (camera === persp && !tween) controls.update();
+  if (follow >= 0) {
+    const a = AGENTS[follow], fx = Math.sin(a.yaw), fz = Math.cos(a.yaw), kf = 1 - Math.exp(-dt * 2.5);
+    tmp.set(a.g.position.x - fx * 2.8, 2.0, a.g.position.z - fz * 2.8); persp.position.lerp(tmp, kf);
+    tmp.set(a.g.position.x + fx * 1.0, 0.8, a.g.position.z + fz * 1.0); controls.target.lerp(tmp, kf);
+    persp.lookAt(controls.target);
+  } else if (camera === persp && !tween) controls.update();
   else if (camera !== persp) {
     const w = innerWidth, h = innerHeight;
     for (const t of tags) {
