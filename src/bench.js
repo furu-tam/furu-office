@@ -68,6 +68,13 @@ const api = {
   },
   leaveMe() { hooks.removeSeat(hooks.myId()); },
   leave(id) { hooks.removeSeat(id); },
+  rows() {
+    return [...hooks.people().values()].map((r) => ({
+      id: r.id, name: r.name, walk: r.walk, wx: r.wx, wz: r.wz, wyaw: r.wyaw,
+      table: r.table, slot: r.slot, walkId: r.walkId, body: !!r.body, kind: r.bodyKind,
+      visible: r.body ? r.body.visible : null, bx: r.body ? r.body.position.x : null, bz: r.body ? r.body.position.z : null,
+    }));
+  },
   clear() {
     for (const child of [...G.people.children]) {
       const id = child.userData.personId;

@@ -1791,7 +1791,14 @@ function broadcastFloor(msg) {
 }
 function onFloorData(msg, from) {
   if (!msg || typeof msg !== 'object') return;
-  if (msg.kind === 'beat' || msg.kind === 'ping') { lastBeat = performance.now(); return; }
+  if (msg.kind === 'beat' || msg.kind === 'ping') {
+    lastBeat = performance.now();
+    // client trả lời beat bằng pong để host biết còn sống — không có thì walker bị 'gone'
+    if (msg.kind === 'beat' && !floorHost && floorLink && floorLink.open) {
+      try { floorLink.send({ kind: 'pong' }); } catch (e) {}
+    }
+    return;
+  }
   if (msg.kind === 'here' && msg.who && floorHost) {
     if (from) from.whoId = msg.who.id;
     applyPresence(msg, true);
@@ -1849,7 +1856,19 @@ function startFloorWatch(gen) {
   clearInterval(floorTimer);
   floorTimer = setInterval(() => {
     if (gen !== floorGen) return;
-    if (floorHost) { broadcastFloor({ kind: 'beat', t: Date.now() }); return; }
+    if (floorHost) {
+      broadcastFloor({ kind: 'beat', t: Date.now() });
+      const now = performance.now();
+      floorConns = floorConns.filter((c) => {
+        // chỉ dọn conn đã từng trả lời ping (client code mới) — client bản cũ không
+        // gửi ping nên không thể phân biệt "chết" với "im lặng hợp lệ"
+        if (!c._pong || now - (c._seen || 0) < 25000) return true;
+        try { c.close(); } catch (e) {}
+        if (c.whoId && c.whoId !== myId) { removeSeat(c.whoId); broadcastFloor({ kind: 'gone', id: c.whoId }); }
+        return false;
+      });
+      return;
+    }
     if (!floorLink || !floorLink.open || performance.now() - lastBeat > 8000) claimFloor();
   }, 2500);
 }
@@ -1863,12 +1882,15 @@ function becomeHost(gen, p, index) {
   p.on('connection', (conn) => {
     floorConns.push(conn);
     conn.on('open', () => {
+      conn._seen = performance.now();
       try { conn.send({ kind: 'beat', t: Date.now() }); } catch (e) {}
       try { conn.send({ kind: 'roster', people: rosterList() }); } catch (e) {}
       if (roomLog.length) { try { conn.send({ kind: 'log', items: roomLog.slice(-30) }); } catch (e) {} }
     });
     conn.on('data', (msg) => {
+      conn._seen = performance.now();
       if (msg && msg.kind === 'ping') { try { conn.send({ kind: 'beat', t: Date.now() }); } catch (e) {} return; }
+      if (msg && msg.kind === 'pong') { conn._pong = true; return; }
       onFloorData(msg, conn);
     });
     conn.on('close', () => {
@@ -2554,12 +2576,19 @@ function fpvTick(dt) {
   persp.position.set(fpvPos.x, 1.6, fpvPos.z);
   persp.rotation.order = 'YXZ';
   persp.rotation.set(fpvPitch, fpvYaw, 0);
-  const now = performance.now();
-  if (now - fpvSentAt > 100) {
-    fpvSentAt = now;
-    sendPresence({ kind: 'move', id: myId, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw });
-  }
+  sendWalkPos();
 }
+// 'move' gửi từ rAF (mượt ở foreground) LẪN interval 250ms — tab nền tạm dừng
+// rAF nên nếu chỉ gửi trong fpvTick thì remote thấy avatar đông cứng tại chỗ spawn.
+function sendWalkPos() {
+  const now = performance.now();
+  if (now - fpvSentAt < 100) return;
+  fpvSentAt = now;
+  sendPresence({ kind: 'move', id: myId, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw });
+}
+document.addEventListener('visibilitychange', () => {
+  if (fpv && document.hidden) { fpvSentAt = 0; sendWalkPos(); }
+});
 // --- walk peer: kênh mời nói chuyện + convo ---
 function ensureWalkPeer() {
   if (walkPeer) return Promise.resolve();
@@ -2736,6 +2765,7 @@ tapTagEl.addEventListener('click', () => { if (tapTarget) sendInvite(tapTarget);
 document.body.appendChild(tapTagEl);
 setInterval(() => {
   if (ytPlayer && ytReady && ytArmed) { try { ytPlayer.setVolume(Math.round(cafeGain() * 100)); } catch (e) {} }
+  if (fpv) sendWalkPos();
   let best = null, bd = TAP_RANGE;
   if (fpv) {
     people.forEach((row) => {
@@ -2818,3 +2848,4 @@ hooks.isHost = () => floorHost;
 hooks.sendFloor = (msg) => { if (floorLink && floorLink.open) { try { floorLink.send(msg); } catch (e) {} } };
 hooks.upsertSeat = upsertSeat;
 hooks.removeSeat = removeSeat;
+hooks.people = () => people;
