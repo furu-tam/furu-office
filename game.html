@@ -1,15 +1,16 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="assets/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png"><link rel="apple-touch-icon" href="assets/apple-touch-icon.png"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>Phòng game · furuCRM</title>
+<title>Ma sói · Phòng game · furuCRM</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="vendor/fonts/fonts.css">
 <link rel="stylesheet" href="css/office.css">
 
-<canvas id="stage" aria-label="Phòng game. Một bàn tròn, 20 ghế. Bấm một ghế để ngồi rồi gieo xúc xắc."></canvas>
+<link rel="stylesheet" href="css/wolf.css">
+<canvas id="stage" aria-label="Phòng game. Một bàn tròn, 20 ghế, chơi ma sói. Bấm một ghế để ngồi."></canvas>
 <div id="faces"></div>
 <div class="plate">
-  <h1>Phòng <span>game</span></h1>
-  <p>Một bàn tròn · 20 ghế</p>
-  <p class="hint" id="hint">Bấm một ghế để ngồi</p>
+  <h1>Ma <span>sói</span></h1>
+  <p>Bàn tròn · 20 ghế</p>
+  <p class="hint" id="hint">Bấm một ghế để ngồi chơi ma sói</p>
   <div class="row">
     <label for="nameInput">Tên</label>
     <input id="nameInput" type="text" maxlength="24" placeholder="Tên của bạn" autocomplete="off" />
@@ -17,11 +18,71 @@
 </div>
 <div class="dock" id="dockGame">
   <button type="button" id="btnSit">Ngồi vào bàn</button>
-  <button type="button" id="btnRoll" hidden>Gieo xúc xắc</button>
+  <button type="button" id="btnWolf" aria-pressed="true">Bảng ma sói</button>
   <button type="button" class="invite" id="btnInvite">Mời</button>
   <button type="button" class="leave" id="btnLeave" hidden>Rời ghế</button>
   <a href="index.html">Về văn phòng</a>
 </div>
+<aside id="wolf" aria-label="Bảng ma sói">
+  <div class="wolf-top">
+    <div>
+      <div class="phase-title" id="phaseTitle">Sảnh chờ</div>
+      <div class="phase-sub" id="phaseSub">Ngồi vào ghế. Đủ 5 người thì chủ phòng bắt đầu ván. Thiếu thì thêm bot.</div>
+    </div>
+    <div class="timer" id="timer">--:--</div>
+  </div>
+  <div class="wolf-chips">
+    <span class="chip">Phòng <b id="roomCode">----</b></span>
+    <button class="copy-btn" id="copyBtn" type="button">Sao chép link mời</button>
+    <span class="chip"><b id="countChip">0/20</b> người</span>
+    <span class="chip" id="phaseChip">Giai đoạn: <b>Sảnh chờ</b></span>
+  </div>
+  <p class="wolf-status" id="netStatus">Đang nối phòng…</p>
+  <div class="wolf-actions">
+    <button class="btn btn-gold" id="hostBtn" type="button">Tạo phòng mới</button>
+    <div class="chat-row">
+      <input type="text" id="codeInput" maxlength="6" placeholder="Mã phòng" autocomplete="off" aria-label="Mã phòng" />
+      <button class="btn btn-ghost" id="guestBtn" type="button">Vào</button>
+    </div>
+    <button class="btn btn-gold" id="joinBtn" type="button">Ngồi vào ghế trống</button>
+    <div class="btn-row two">
+      <button class="btn btn-ghost" id="fillBtn" type="button">Thêm bot</button>
+      <button class="btn btn-ghost" id="leaveBtn" type="button">Rời ghế</button>
+    </div>
+  </div>
+  <div class="me-card" id="meCard" style="display:none">
+    <div class="seat-line">Bạn đang ngồi: <b id="meSeat">—</b></div>
+    <div class="btn-row two">
+      <button class="btn btn-ghost" id="revealBtn" type="button">Xem vai của tôi</button>
+      <button class="btn btn-ghost" id="readyBtn" type="button">Sẵn sàng</button>
+    </div>
+    <div class="role-reveal" id="roleReveal"></div>
+  </div>
+  <div class="actionbar">
+    <div class="msg" id="actionMsg">Ngồi vào bàn. Khi có ít nhất 5 người, chủ phòng bấm Bắt đầu ván.<small>Đêm: sói cắn, bảo vệ che, tiên tri soi, phù thủy dùng thuốc. Ngày: thảo luận rồi bỏ phiếu treo cổ.</small></div>
+    <button class="btn btn-red" id="startBtn" type="button">Bắt đầu ván</button>
+    <button class="btn btn-ghost" id="nextBtn" type="button" style="display:none">Tiếp tục</button>
+    <div class="witch-btns" id="witchBtns" style="display:none">
+      <button class="btn btn-gold" id="witchSaveBtn" type="button">Dùng thuốc cứu</button>
+      <button class="btn btn-red" id="witchKillBtn" type="button">Dùng thuốc độc</button>
+      <button class="btn btn-ghost" id="witchSkipBtn" type="button">Bỏ qua</button>
+    </div>
+  </div>
+  <div class="win-banner" id="winBanner"></div>
+  <h2>Ghế quanh bàn</h2>
+  <div class="slots" id="slotList"></div>
+  <h2>Nhật ký</h2>
+  <div class="log" id="log"></div>
+  <div class="chat-row">
+    <input type="text" id="chatInput" maxlength="120" placeholder="Nói với cả làng…" autocomplete="off" aria-label="Nói với cả làng" />
+    <button class="btn btn-gold" id="chatBtn" type="button">Gửi</button>
+  </div>
+  <div class="table-wrap" id="tableWrap" hidden>
+    <div class="big" id="tableIcon">🌕</div>
+    <div class="cap" id="tableCap">Bàn tròn</div>
+    <div id="tableAlive"></div>
+  </div>
+</aside>
 <div id="toast" role="status"></div>
 <p id="err" hidden>Trình duyệt này không chạy được WebGL.</p>
 
