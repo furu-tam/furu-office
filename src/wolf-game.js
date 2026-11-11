@@ -79,14 +79,14 @@ export function bootWolf(onChange) {
   }
   function buildSlotList(){
     slotList.innerHTML="";
-    slots.forEach(function(s,i){
+    var voting = turnId === "vote";
+    var menu = $("seatMenu");
+    if (menu) menu.hidden = !voting;
+    if (voting) slots.forEach(function(s,i){
+      if (s.type==="empty" || !s.alive) return;
       var b=document.createElement("button"); b.type="button";
-      b.className="slot-item"+(s.type==="empty"?" empty":"")+(s.you?" you":"")+(!s.alive&&s.type!=="empty"?" dead":"");
-      if (s.type==="empty"){
-        b.innerHTML='<span class="num">'+(i+1)+'</span><span class="nm">Ghế trống</span><span class="tag">TRỐNG</span>';
-      } else {
-        b.innerHTML='<span class="num">'+(i+1)+'</span><span class="ava" style="background:'+AVA_COLORS[i]+'">'+esc(initials(s.name))+'</span><span class="nm">'+esc(s.name)+'</span><span class="tag">'+(s.you?"BẠN":(s.type==="bot"?"BOT":"NGƯỜI"))+(s.ready?" ✔":"")+'</span>';
-      }
+      b.className="slot-item"+(s.you?" you":"");
+      b.innerHTML='<span class="num">'+(i+1)+'</span><span class="ava" style="background:'+AVA_COLORS[i]+'">'+esc(initials(s.name))+'</span><span class="nm">'+esc(s.name)+'</span><span class="tag">'+(s.you?"BẠN":(s.type==="bot"?"BOT":"NGƯỜI"))+'</span>';
       b.addEventListener("click", function(){ onSeatClick(i); });
       slotList.appendChild(b);
     });
@@ -138,18 +138,20 @@ export function bootWolf(onChange) {
   function showTurn(id){
     turnId = id || "lobby";
     var rail = $("turns");
-    if (!rail) return;
-    rail.hidden = turnId === "lobby";
-    var order = ["wolf","guard","seer","witch","dawn","vote"];
-    var at = order.indexOf(turnId);
-    rail.querySelectorAll("[data-turn]").forEach(function(el){
-      var key = el.getAttribute("data-turn");
-      var i = order.indexOf(key);
-      var hunter = key === "hunter";
-      el.hidden = hunter && turnId !== "hunter";
-      el.classList.toggle("now", key === turnId);
-      el.classList.toggle("done", turnId === "end" ? !hunter : (at > -1 && i > -1 && i < at));
-    });
+    if (rail){
+      rail.hidden = turnId === "lobby";
+      var order = ["wolf","guard","seer","witch","dawn","vote"];
+      var at = order.indexOf(turnId);
+      rail.querySelectorAll("[data-turn]").forEach(function(el){
+        var key = el.getAttribute("data-turn");
+        var i = order.indexOf(key);
+        var hunter = key === "hunter";
+        el.hidden = hunter && turnId !== "hunter";
+        el.classList.toggle("now", key === turnId);
+        el.classList.toggle("done", turnId === "end" ? !hunter : (at > -1 && i > -1 && i < at));
+      });
+    }
+    buildSlotList();
   }
   function speakGm(text){
     text = (text || "").trim();
