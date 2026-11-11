@@ -7,6 +7,7 @@
 //   - walker không hiện phía remote / move bị đông cứng (rAF stall)
 //   - avatar quay lưng (gửi camera yaw thay vì model yaw, lệch 180°)
 //   - seat -> walk transition mất row
+//   - tapNotice không bấm được khi FPV giữ pointer lock (phím T teleport)
 import { chromium } from 'playwright-core';
 
 const EXE = process.env.CHROME_BIN
@@ -69,6 +70,21 @@ try {
   const moved = await rowOn(A, bId);
   check('move lan truyền (wz thay đổi)', moved && moved.wz !== walking.wz, walking && moved && `${walking.wz.toFixed(2)} -> ${moved.wz.toFixed(2)}`);
   check('body bám theo wx/wz', moved && near(moved.bx, moved.wx, 0.6) && near(moved.bz, moved.wz, 0.6), moved && `body(${moved.bx?.toFixed(1)},${moved.bz?.toFixed(1)}) vs (${moved.wx?.toFixed(1)},${moved.wz?.toFixed(1)})`);
+
+  // --- A ngồi rồi vỗ vai B -> B bấm T teleport tới gần A ngay trong FPV ---
+  await A.evaluate(() => document.querySelector('.dtag .sit').click());
+  await A.waitForTimeout(2500);
+  const aSeat = await rowOn(B, aId);
+  check('B thấy A ngồi (làm đích teleport)', aSeat && aSeat.kind === 'seat' && aSeat.px != null);
+  await A.evaluate((to) => __bench.floor({ kind: 'tap', id: 'tap-test-' + Date.now(), to, from: __bench.myId(), name: 'A' }), bId);
+  await B.waitForTimeout(1500);
+  const notice = await B.evaluate(() => !document.getElementById('tapNotice').hidden);
+  check('B hiện tapNotice', notice);
+  await B.keyboard.press('KeyT');
+  await B.waitForTimeout(2000);
+  const teleported = await rowOn(A, bId);
+  const dTele = teleported && aSeat && Math.hypot(teleported.px - aSeat.px, teleported.pz - aSeat.pz);
+  check('B bấm T teleport tới gần A (vẫn trong FPV)', teleported && teleported.walk === 1 && dTele < 3.5, teleported && `d=${dTele?.toFixed(2)}m`);
 
   // --- B thoát FPV (Home) -> row biến mất phía A ---
   await B.evaluate(() => document.getElementById('vhome').click());

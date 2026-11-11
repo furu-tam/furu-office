@@ -2734,10 +2734,27 @@ function goToTapper() {
     const s = findSpawn(x, z, islandOf(row.table));
     x = s.x; z = s.z;
   }
-  enterFpv(x, z, Math.atan2(x - p.x, z - p.z));
+  const yaw = Math.atan2(x - p.x, z - p.z);
+  if (fpv) { fpvPos.set(x, 0, z); fpvYaw = yaw; fpvPitch = 0; fpvSentAt = 0; sendWalkPos(); }
+  else enterFpv(x, z, yaw);
   if (row.walkId) setTimeout(() => sendInvite(row), 400);
 }
 $('tapGo').addEventListener('click', goToTapper);
+// FPV giữ pointer lock nên không click được nút — phím tắt cho các dialog:
+// T = đi tới người vỗ vai · Y/Enter = nhận · N = từ chối.
+document.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  const tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.code === 'KeyT' && !$('tapNotice').hidden) { e.preventDefault(); goToTapper(); return; }
+  if (e.code === 'KeyY' || e.code === 'Enter') {
+    if (!$('tapAsk').hidden) { e.preventDefault(); $('tapYes').click(); }
+    else if (!$('pairAsk').hidden) { e.preventDefault(); $('pairYes').click(); }
+  } else if (e.code === 'KeyN') {
+    if (!$('tapAsk').hidden) { e.preventDefault(); $('tapNo').click(); }
+    else if (!$('pairAsk').hidden) { e.preventDefault(); $('pairNo').click(); }
+  }
+});
 // --- nhạc cà phê: YouTube ẩn, 80% trong zone, 0 ngoài ---
 window.onYouTubeIframeAPIReady = () => {
   ytPlayer = new YT.Player('ytBox', {
@@ -2848,6 +2865,7 @@ hooks.myId = () => myId;
 hooks.mySlot = () => mySlot;
 hooks.isHost = () => floorHost;
 hooks.sendFloor = (msg) => { if (floorLink && floorLink.open) { try { floorLink.send(msg); } catch (e) {} } };
+hooks.posOf = (r) => posOf(r);
 hooks.upsertSeat = upsertSeat;
 hooks.removeSeat = removeSeat;
 hooks.people = () => people;

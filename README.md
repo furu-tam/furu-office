@@ -14,6 +14,19 @@ npm run serve            # python3 -m http.server 8977
 
 Mở 2 tab/cửa sổ để test tương tác 2 người.
 
+## Phím tắt
+
+| Phím | Tác dụng |
+|---|---|
+| `WASD` / mũi tên | Di chuyển (chế độ đi dạo FPV) |
+| `T` | Đi tới người vừa vỗ vai (kể cả đang FPV) |
+| `Y` / `Enter` | Nhận lời mời nói chuyện / nói riêng |
+| `N` | Từ chối lời mời |
+| `Esc` | Thả chuột / thoát chế độ hiện tại |
+| `Home` | Thoát FPV về view mặc định |
+
+FPV giữ pointer lock nên nút trên màn hình không click được — dùng `T`/`Y`/`N`.
+
 ## Test
 
 ```bash

@@ -69,12 +69,18 @@ const api = {
   leaveMe() { hooks.removeSeat(hooks.myId()); },
   leave(id) { hooks.removeSeat(id); },
   rows() {
-    return [...hooks.people().values()].map((r) => ({
-      id: r.id, name: r.name, walk: r.walk, wx: r.wx, wz: r.wz, wyaw: r.wyaw,
-      table: r.table, slot: r.slot, walkId: r.walkId, body: !!r.body, kind: r.bodyKind,
-      visible: r.body ? r.body.visible : null, bx: r.body ? r.body.position.x : null, bz: r.body ? r.body.position.z : null,
-    }));
+    return [...hooks.people().values()].map((r) => {
+      const p = hooks.posOf(r);
+      return {
+        id: r.id, name: r.name, walk: r.walk, wx: r.wx, wz: r.wz, wyaw: r.wyaw,
+        table: r.table, slot: r.slot, walkId: r.walkId, body: !!r.body, kind: r.bodyKind,
+        px: p ? p.x : null, pz: p ? p.z : null,
+        visible: r.body ? r.body.visible : null, bx: r.body ? r.body.position.x : null, bz: r.body ? r.body.position.z : null,
+      };
+    });
   },
+  // Gửi 1 gói floor message thật (tap/say...) — host thì broadcast, client thì gửi lên host.
+  floor(msg) { if (hooks.isHost()) hooks.broadcastFloor(msg); else hooks.sendFloor(msg); },
   clear() {
     for (const child of [...G.people.children]) {
       const id = child.userData.personId;
