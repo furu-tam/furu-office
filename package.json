@@ -1,0 +1,13 @@
+{
+  "name": "furu-office",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "python3 -m http.server 8977",
+    "test": "node bench/test-presence.mjs",
+    "bench": "node bench/run-bench.mjs run"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.0"
+  }
+}
