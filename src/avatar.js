@@ -146,7 +146,7 @@ function textSprite(text, w, h, font, color, bg) {
   return sprite;
 }
 
-export function buildCharacter(look) {
+export function buildCharacter(look, stance = 'seat') {
   const S = clampLook(look) || freshLook();
   const female = S.gender === 'nu';
   const has = (key) => S.acc.includes(key);
@@ -166,17 +166,31 @@ export function buildCharacter(look) {
     glow: new THREE.MeshStandardMaterial({ color: accC, emissive: new THREE.Color(accC), emissiveIntensity: 1.2 }),
   };
   const root = new THREE.Group();
-  const out = { root, blink: [], zs: [], blinkT: 2 + Math.random() * 2, phase: Math.random() * Math.PI * 2 };
+  const standing = stance === 'stand';
+  const out = { root, blink: [], zs: [], legs: [], blinkT: 2 + Math.random() * 2, phase: Math.random() * Math.PI * 2 };
 
-  for (const s of [-1, 1]) {
-    mk(new THREE.CapsuleGeometry(0.085, 0.3, 6, 14), M.pants, root, s * 0.11, 0.56, 0.17).rotation.x = Math.PI / 2;
-    mk(new THREE.CapsuleGeometry(0.075, 0.3, 6, 14), M.pants, root, s * 0.11, 0.32, 0.38);
-    mk(new THREE.SphereGeometry(0.09, 18, 12), M.shoe, root, s * 0.11, 0.06, 0.43).scale.set(1, 0.55, 1.5);
+  if (standing) {
+    for (const s of [-1, 1]) {
+      const pivot = new THREE.Group();
+      pivot.position.set(s * 0.11, 0.86, 0);
+      root.add(pivot);
+      mk(new THREE.CapsuleGeometry(0.082, 0.62, 6, 14), M.pants, pivot, 0, -0.4, 0);
+      mk(new THREE.SphereGeometry(0.09, 18, 12), M.shoe, pivot, 0, -0.79, 0.05).scale.set(1, 0.55, 1.5);
+      out.legs.push(pivot);
+    }
+    mk(new THREE.SphereGeometry(0.2, 24, 16), M.pants, root, 0, 0.9, 0).scale.set(female ? 1.0 : 1.05, 0.55, 0.95);
+  } else {
+    for (const s of [-1, 1]) {
+      mk(new THREE.CapsuleGeometry(0.085, 0.3, 6, 14), M.pants, root, s * 0.11, 0.56, 0.17).rotation.x = Math.PI / 2;
+      mk(new THREE.CapsuleGeometry(0.075, 0.3, 6, 14), M.pants, root, s * 0.11, 0.32, 0.38);
+      mk(new THREE.SphereGeometry(0.09, 18, 12), M.shoe, root, s * 0.11, 0.06, 0.43).scale.set(1, 0.55, 1.5);
+    }
+    mk(new THREE.SphereGeometry(0.2, 24, 16), M.pants, root, 0, 0.56, 0).scale.set(female ? 1.0 : 1.05, 0.55, 0.95);
   }
-  mk(new THREE.SphereGeometry(0.2, 24, 16), M.pants, root, 0, 0.56, 0).scale.set(female ? 1.0 : 1.05, 0.55, 0.95);
 
   const torso = new THREE.Group();
-  torso.position.y = 0.56;
+  torso.position.y = standing ? 0.92 : 0.56;
+  out.torsoY = torso.position.y;
   root.add(torso);
   out.torso = torso;
   const sx = female ? 0.97 : 1.12;
@@ -239,7 +253,8 @@ export function buildCharacter(look) {
   }
 
   const head = new THREE.Group();
-  head.position.set(0, HEAD_Y, 0);
+  head.position.set(0, standing ? HEAD_Y + 0.28 : HEAD_Y, 0);
+  out.headY = head.position.y;
   root.add(head);
   out.head = head;
   mk(new THREE.SphereGeometry(R, 44, 30), M.skin, head).scale.set(1, 1.02, 0.96);
@@ -465,12 +480,21 @@ export function buildCharacter(look) {
   return out;
 }
 
+export function buildWalker(look) {
+  return buildCharacter(look, 'stand');
+}
+
 export function tickAvatar(avatar, dt, t, reduced) {
   if (!avatar) return;
   const amp = reduced ? 0 : 1;
   const breath = Math.sin(t * 2 + avatar.phase) * 0.006 * amp;
-  avatar.torso.position.y = 0.56 + breath;
-  avatar.head.position.y = HEAD_Y + breath;
+  avatar.torso.position.y = (avatar.torsoY || 0.56) + breath;
+  avatar.head.position.y = (avatar.headY || HEAD_Y) + breath;
+  if (avatar.legs.length) {
+    const sw = (avatar.walkAmt || 0) * 0.5;
+    avatar.legs[0].rotation.x = Math.sin(t * 8 + avatar.phase) * sw;
+    avatar.legs[1].rotation.x = Math.sin(t * 8 + avatar.phase + Math.PI) * sw;
+  }
   avatar.head.rotation.y = Math.sin(t * 0.6 + avatar.phase) * 0.18 * amp;
   avatar.head.rotation.x = Math.sin(t * 0.4 + avatar.phase) * 0.04 * amp;
   avatar.blinkT -= dt;
@@ -479,7 +503,7 @@ export function tickAvatar(avatar, dt, t, reduced) {
   if (avatar.blinkT < -0.12) avatar.blinkT = 2 + Math.random() * 3;
   for (const zed of avatar.zs) {
     const u = (t * 0.35 + zed.ph) % 1;
-    zed.z.position.set(0.2 + u * 0.12, HEAD_Y + 0.22 + u * 0.3, 0.05);
+    zed.z.position.set(0.2 + u * 0.12, (avatar.headY || HEAD_Y) + 0.22 + u * 0.3, 0.05);
     zed.z.material.opacity = Math.sin(u * Math.PI);
   }
 }

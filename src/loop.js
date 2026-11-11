@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { placeOffice, updateVoiceMeters } from './session.js';
+import { placeOffice, updateVoiceMeters, tickSession, isFpv } from './session.js';
 import { tickAvatar } from './avatar.js';
 import {
   AGENTS, AQ, G, REDUCED, T, boat, camera, controls, follow, gulls, ortho, persp, rackMats, renderer, scene, seaMat, setTween, tags, tween, updateAgents, updateServer
@@ -53,7 +53,7 @@ renderer.setAnimationLoop(() => {
     tmp.set(a.g.position.x - fx * 2.8, 2.0, a.g.position.z - fz * 2.8); persp.position.lerp(tmp, kf);
     tmp.set(a.g.position.x + fx * 1.0, 0.8, a.g.position.z + fz * 1.0); controls.target.lerp(tmp, kf);
     persp.lookAt(controls.target);
-  } else if (camera === persp && !tween) controls.update();
+  } else if (camera === persp && !tween && !isFpv()) controls.update();
   else if (camera !== persp) {
     const w = innerWidth, h = innerHeight;
     for (const t of tags) {
@@ -61,6 +61,7 @@ renderer.setAnimationLoop(() => {
       t.el.style.left = `${(tmp.x * 0.5 + 0.5) * w}px`; t.el.style.top = `${(-tmp.y * 0.5 + 0.5) * h}px`;
     }
   }
+  tickSession(dt);
   placeOffice();
   updateVoiceMeters();
   renderer.render(scene, camera);

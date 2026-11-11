@@ -42,6 +42,8 @@
   <button id="vlounge" type="button" aria-pressed="false">Góc nghỉ</button>
   <button id="btnFish" type="button" aria-pressed="false">Ngắm cá</button>
   <button id="vagent" type="button" aria-pressed="false">Theo agent</button>
+  <button id="vwalk" type="button" aria-pressed="false">Đi dạo</button>
+  <button id="vhome" type="button" aria-pressed="false">Home</button>
   <a href="game.html">Phòng game</a>
 </div>
 <div class="dock" id="dockRoom" hidden>
@@ -51,6 +53,10 @@
   <button type="button" id="btnCam">Camera đang tắt</button>
   <button type="button" id="btnShare" hidden>Chia sẻ màn hình</button>
   <button type="button" id="btnTv" hidden>Xem full</button>
+  <button type="button" id="btnBc" hidden>Nói cả bàn</button>
+  <button type="button" id="btnDnd">Không làm phiền</button>
+  <button type="button" class="leave" id="btnPairEnd" hidden>Kết thúc nói riêng</button>
+  <button type="button" class="leave" id="btnConvoEnd" hidden>Rời cuộc trò chuyện</button>
   <button type="button" id="btnChat">Chat</button>
   <button type="button" class="coffee" id="btnCoffee" hidden>Gọi cà phê</button>
   <button type="button" class="invite" id="btnInvite" hidden>Mời</button>
@@ -100,7 +106,19 @@
     </form>
   </div>
 </div>
-<div id="tapNotice" role="status" hidden><b>Vỗ vai</b><span></span></div>
+<div id="tapNotice" role="status" hidden><b>Vỗ vai</b><span></span><button type="button" id="tapGo">Đi tới</button></div>
+<div id="pairAsk" hidden>
+  <span id="pairAskText"></span>
+  <button type="button" id="pairYes">Nhận</button>
+  <button type="button" id="pairNo">Từ chối</button>
+</div>
+<div id="tapAsk" hidden>
+  <span id="tapAskText"></span>
+  <button type="button" id="tapYes">Nhận</button>
+  <button type="button" id="tapNo">Từ chối</button>
+</div>
+<div id="crosshair" hidden>+</div>
+<div id="ytBox" hidden></div>
 <p id="err" hidden>Trình duyệt này không chạy được WebGL.</p>
 
 <script type="importmap">
