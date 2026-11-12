@@ -12,7 +12,8 @@ import { chromium } from 'playwright-core';
 
 const EXE = process.env.CHROME_BIN
   || `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1248/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`;
-const BASE = process.env.BENCH_URL || 'http://localhost:8977/index.html?bench=1&perf=1';
+// hub=furu-test: test chạy trên floor riêng — bot "T" không lọt vào phòng production
+const BASE = process.env.BENCH_URL || 'http://localhost:8977/index.html?bench=1&perf=1&hub=furu-test';
 const LOOK = { v: 2, gender: 'nam', face: 'vui', hair: 'ngan', hairColor: 0, skin: 1, top: 'polo', shirt: 8, pants: 0, acc: ['luoitrai'], accColor: 5 };
 
 let failures = 0;
