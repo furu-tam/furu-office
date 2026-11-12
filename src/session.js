@@ -2349,7 +2349,7 @@ $('btnInvite').addEventListener('click', () => {
   const slug = inviteSlug(island);
   if (slug) copyInvite(slug, island.label);
 });
-$('btnFish').addEventListener('click', enterFish);
+if (fishBtn) fishBtn.addEventListener('click', enterFish);
 let menuOpen = true;
 let preferChat = innerWidth > 980;
 try { menuOpen = localStorage.getItem('furu-office-menu') !== '0'; } catch (e) {}
