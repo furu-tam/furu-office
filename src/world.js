@@ -1027,7 +1027,7 @@ for (const [x, z, s] of [[-4.8, -7.5, 1.1], [4.4, -7.5, 1.1], [12.5, -7.6, 1.2],
   const secTex = canvasTex(512, 256, (g, w, h) => {
     g.fillStyle = '#102028'; g.fillRect(0, 0, w, h);
     g.fillStyle = '#3fd0c0'; g.font = '700 54px sans-serif'; g.textAlign = 'center';
-    g.fillText('SECURITY', w / 2, 108);
+    g.fillText('RAG', w / 2, 108);
     g.fillStyle = '#d5e4e8'; g.font = '400 28px sans-serif'; g.fillText('tra cứu', w / 2, 164);
   }, 'security_sign');
   plane(0.72, 0.46, new THREE.MeshBasicMaterial({ map: secTex }), 12.68, 1.18, -3.2, -Math.PI / 2, sec);
@@ -1043,8 +1043,8 @@ for (const [x, z, s] of [[-4.8, -7.5, 1.1], [4.4, -7.5, 1.1], [12.5, -7.6, 1.2],
   const el = document.createElement('button');
   el.type = 'button';
   el.className = 'dtag';
-  el.innerHTML = '<b>Security</b>tra cứu';
-  el.title = 'Mở trang tra cứu';
+  el.innerHTML = '<b>RAG</b>tra cứu';
+  el.title = 'Mở RAG';
   el.addEventListener('click', (e) => { e.stopPropagation(); hooks.enterSecurity(); });
   deskTagsEl.appendChild(el);
   securityTag = { el, v: new THREE.Vector3(12.42, 1.85, -3.2) };
@@ -1067,10 +1067,8 @@ export const AGENTS = [];
     g.fillStyle = '#a8c1c9'; g.font = '400 23px "Be Vietnam Pro", system-ui, sans-serif'; g.fillText(role, 60, 76);
   }
   const DEFS = [
-    { name: 'Claude', role: 'viết code', hex: 0xd97757, speed: 0.9, start: 0,
-      route: [[-7.2, -2.75, 1.2], [7.6, -2.75, 1.2], [7.6, 5.9, 1.2], [-7.2, 5.9, 1.2]] },
-    { name: 'Cursor', role: 'trong editor', hex: 0x4aa8ff, speed: 1.0, start: 2,
-      route: [[-7.2, -2.75, 1], [-7.2, 5.9, 1], [7.6, 5.9, 1], [7.6, -2.75, 1]] },
+    { name: 'Claude', role: 'viết code', hex: 0xd97757, home: [-12.32, 0.4] },
+    { name: 'Cursor', role: 'trong editor', hex: 0x4aa8ff, home: [-12.32, 1.85] },
   ];
   for (const d of DEFS) {
     const col = '#' + d.hex.toString(16).padStart(6, '0');
@@ -1100,34 +1098,55 @@ export const AGENTS = [];
     const tex = new THREE.CanvasTexture(tc); tex.colorSpace = THREE.SRGBColorSpace;
     document.fonts?.ready.then(() => { drawTag(tc, d.name, d.role, col); tex.needsUpdate = true; });
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false })); tag.scale.set(0.9, 0.27, 1); tag.position.y = 1.5; g.add(tag);
-    const route = d.route.map(([x, z, pause = 0, face = null, act = null]) => ({ p: new THREE.Vector2(x, z), pause, face, act }));
-    const s0 = route[d.start], next = route[(d.start + 1) % route.length];
-    const dir = next.p.clone().sub(s0.p).normalize();
-    AGENTS.push({ d, g, body, head, eyes, hands, ring, cup, accent, route,
-      idx: (d.start + 1) % route.length, pos: s0.p.clone(), dir, off: new THREE.Vector2(),
-      yaw: Math.atan2(dir.x, dir.y), wait: 0, faceYaw: null, act: null, moving: true, ph: rng() * 6.28, blink: rr(1, 4) });
+    const home = new THREE.Vector2(d.home[0], d.home[1]);
+    AGENTS.push({ d, g, body, head, eyes, hands, ring, cup, accent, home,
+      pos: home.clone(), dir: new THREE.Vector2(1, 0), off: new THREE.Vector2(),
+      yaw: Math.PI / 2, faceYaw: Math.PI / 2, path: [], moving: false, ph: rng() * 6.28, blink: rr(1, 4) });
   }
+}
+const RUN = 2.6;
+export function summonAgent(x, z) {
+  const here = new THREE.Vector2(x, z);
+  const atHome = (a) => !a.path.length && a.pos.distanceTo(a.home) < 0.45;
+  const waiting = AGENTS.filter(atHome);
+  let pick = waiting.slice().sort((a, b) => a.home.distanceToSquared(here) - b.home.distanceToSquared(here))[0];
+  if (pick && pick.pos.distanceTo(here) < 1.15) {
+    const other = AGENTS.find((a) => a !== pick && atHome(a));
+    if (other) pick = other;
+  }
+  if (!pick) pick = AGENTS.slice().sort((a, b) => b.pos.distanceToSquared(here) - a.pos.distanceToSquared(here))[0];
+  if (!pick) return '';
+  const from = pick.pos.clone();
+  const stand = here.clone();
+  const away = from.clone().sub(here);
+  if (away.lengthSq() < 0.04) away.set(1, 0);
+  away.normalize();
+  stand.addScaledVector(away, 0.95);
+  stand.x = Math.max(-11.4, Math.min(12, stand.x));
+  stand.y = Math.max(-8.5, Math.min(8.5, stand.y));
+  const path = [];
+  if (from.x < -11.1) path.push(new THREE.Vector2(-10.5, pick.home.y));
+  path.push(stand);
+  pick.path = path;
+  pick.faceYaw = Math.atan2(here.x - stand.x, here.y - stand.y);
+  return pick.d.name;
 }
 const laneV = new THREE.Vector2();
 export function updateAgents(dt, t) {
   const k = 1 - Math.exp(-dt * 4);
   for (const a of AGENTS) {
-    let wantYaw = a.yaw;
-    if (a.wait > 0) {
-      a.wait -= dt; a.moving = false;
-      if (a.faceYaw !== null) wantYaw = a.faceYaw;
-      if (a.wait <= 0 && a.act) { a.cup.visible = a.act === 'pick'; a.act = null; }
-    } else {
-      const tgt = a.route[a.idx], v = tgt.p.clone().sub(a.pos), dist = v.length(), step = a.d.speed * dt;
-      if (dist <= step) {
-        a.pos.copy(tgt.p);
-        if (tgt.pause) { a.wait = tgt.pause; a.faceYaw = tgt.face; a.act = tgt.act; }
-        a.idx = (a.idx + 1) % a.route.length;
+    let wantYaw = a.faceYaw;
+    if (a.path.length) {
+      const tgt = a.path[0], v = tgt.clone().sub(a.pos), dist = v.length(), step = RUN * dt;
+      if (dist <= Math.max(step, 0.08)) {
+        a.pos.copy(tgt);
+        a.path.shift();
+        a.moving = a.path.length > 0;
       } else {
         v.divideScalar(dist); a.pos.addScaledVector(v, step); a.dir.copy(v); a.moving = true;
         wantYaw = Math.atan2(v.x, v.y);
       }
-    }
+    } else a.moving = false;
     a.off.lerp(laneV.set(-a.dir.y, a.dir.x).multiplyScalar(a.moving ? 0.18 : 0), k);
     let diff = wantYaw - a.yaw; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
     a.yaw += diff * Math.min(1, dt * 6);
@@ -1136,12 +1155,12 @@ export function updateAgents(dt, t) {
     a.g.rotation.x += ((a.moving ? 0.1 : 0) - a.g.rotation.x) * k;
     a.body.position.y = 0.1 + Math.sin(t * 2.4 + a.ph) * 0.035;
     a.hands.forEach((h, i) => { h.position.z = 0.02 + (a.moving ? Math.sin(t * 7 + a.ph + i * Math.PI) * 0.06 : 0); });
-    a.head.rotation.y += ((a.wait > 0 ? Math.sin(t * 1.5 + a.ph) * 0.4 : 0) - a.head.rotation.y) * k;
+    a.head.rotation.y += ((a.moving ? 0 : Math.sin(t * 1.5 + a.ph) * 0.25) - a.head.rotation.y) * k;
     a.blink -= dt;
-    let ey = a.wait > 0 ? 0.45 : 1;
+    let ey = a.moving ? 1 : 0.7;
     if (a.blink < 0) { ey = 0.1; if (a.blink < -0.12) a.blink = rr(2, 5); }
     a.eyes.forEach(e => { e.scale.y += (ey - e.scale.y) * Math.min(1, dt * 20); });
-    a.accent.emissiveIntensity = 1 + 0.8 * (0.5 + 0.5 * Math.sin(t * (a.wait > 0 ? 9 : 3) + a.ph));
+    a.accent.emissiveIntensity = 1 + 0.8 * (0.5 + 0.5 * Math.sin(t * (a.moving ? 3 : 1.4) + a.ph));
     a.ring.material.opacity = 0.3 + 0.12 * Math.sin(t * 2.4 + a.ph);
   }
 }
@@ -1432,7 +1451,7 @@ const ZONES = [
   ['Phòng server', '4 rack', [-11.2, 1, 6.1]],
   ['Lễ tân', 'lối vào · hồ thủy sinh 120', [-1.45, 1, 6.6]],
   ['Ban công', 'ghế nằm · bàn cà phê', [2, 1, -9.4], 'warm'],
-  ['Security', 'tra cứu', [12.42, 1, -3.2]],
+  ['RAG', 'tra cứu', [12.42, 1, -3.2]],
 ];
 export const labelsEl = document.getElementById('labels');
 export const tags = ZONES.map(([n, s, p, cls]) => {
@@ -1481,7 +1500,7 @@ export function go(id) {
   if (REDUCED) { persp.position.copy(p1); controls.target.copy(t1); tween = null; return; }
   tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1, t1, s: 0 };
 }
-buttons.forEach(b => { if (b.id !== 'btnFish' && b.id !== 'vwalk' && b.id !== 'vhome') b.addEventListener('click', () => go(b.id)); });
+buttons.forEach(b => { if (b.id !== 'btnFish' && b.id !== 'vwalk' && b.id !== 'vhome' && b.id !== 'btnCallAgent') b.addEventListener('click', () => go(b.id)); });
 controls.addEventListener('start', () => { tween = null; });
 
 let walkView = false;

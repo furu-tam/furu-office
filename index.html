@@ -44,7 +44,8 @@
   <button id="vagent" type="button" aria-pressed="false">Theo agent</button>
   <button id="vwalk" type="button" aria-pressed="false">Đi dạo</button>
   <button id="vhome" type="button" aria-pressed="false">Home</button>
-  <a href="game.html">Phòng game</a>
+  <button id="btnCallAgent" type="button">Gọi agent</button>
+  <a href="game.html" hidden>Phòng game</a>
 </div>
 <div class="dock" id="dockRoom" hidden>
   <button type="button" class="talk" id="btnTalk">Bật tiếng</button>
@@ -60,6 +61,7 @@
   <button type="button" id="btnChat">Chat</button>
   <button type="button" class="coffee" id="btnCoffee" hidden>Gọi cà phê</button>
   <button type="button" class="invite" id="btnInvite" hidden>Mời</button>
+  <button type="button" id="btnCallAgentRoom">Gọi agent</button>
   <button type="button" class="leave" id="btnLeave">Rời bàn</button>
 </div>
 <div id="tvFull" hidden>
@@ -68,14 +70,14 @@
 </div>
 <div id="secureRoom" hidden>
   <header>
-    <b>Security</b>
+    <b>RAG</b>
     <span>Tra cứu · Esc hoặc Thoát để về văn phòng</span>
     <span class="spacer"></span>
     <button type="button" id="secureExit">Thoát</button>
   </header>
-  <iframe id="secureFrame" title="Security tra cứu" hidden></iframe>
+  <iframe id="secureFrame" title="RAG" hidden></iframe>
   <div id="secureBlocked" hidden>
-    <p>Trang tra cứu không cho phép nhúng vào văn phòng. Mở tab mới để đăng nhập và tra cứu, rồi bấm Thoát để về phòng.</p>
+    <p>Trang RAG không cho phép nhúng vào văn phòng. Mở tab mới để đăng nhập, rồi bấm Thoát để về phòng.</p>
     <a href="https://furu-agentforce.my.site.com/pwas/s/login/?ec=302&amp;startURL=%2Fpwas%2Fs%2F" target="_blank" rel="noopener">Mở trang tra cứu</a>
   </div>
 </div>

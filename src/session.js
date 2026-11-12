@@ -3,7 +3,7 @@ import { BODY_ACC, EXCL, ROWS, buildWalker, clampLook, createPreview, disposeAva
 
 import {
   hooks, setCamera, setTween, setFollow, setMyIsland, setHoveredIsland, setWatchingFish, setInSecurity, setFishPose, setSecurityPose, setSecurityBlocked, setWalkView,
-  AGENTS, AQ, G, REDUCED, SECURITY_URL, T, boat, box, burndownTex, buttons, camera, cancelMyCoffee, canvas, controls, desk, deskTagsEl, facesEl, fishBtn, fishPose, fishTag, follow, go, gulls, hoveredIsland, inSecurity, islands, labelsEl, meetingTvMat, meetingTvMesh, myIsland, onCoffeeOrder, orderCoffee, ortho, persp, pickers, rackMats, renderer, scene, seaMat, seated, securityBlocked, securityPose, securityTag, tags, tween, updateAgents, updateServer, watchingFish
+  AGENTS, AQ, G, REDUCED, SECURITY_URL, T, boat, box, burndownTex, buttons, camera, cancelMyCoffee, canvas, controls, desk, deskTagsEl, facesEl, fishBtn, fishPose, fishTag, follow, go, gulls, hoveredIsland, inSecurity, islands, labelsEl, meetingTvMat, meetingTvMesh, myIsland, onCoffeeOrder, orderCoffee, ortho, persp, pickers, rackMats, renderer, scene, seaMat, seated, securityBlocked, securityPose, securityTag, summonAgent, tags, tween, updateAgents, updateServer, watchingFish
 } from './world.js';
 
 // ---------- ngồi bàn làm việc: tiếng và camera trong cùng đảo ----------
@@ -72,6 +72,13 @@ sitBtn.hidden = true;
 sitBtn.textContent = 'Ngồi xuống';
 sitBtn.addEventListener('click', (e) => { e.stopPropagation(); sitFromWalk(); });
 document.body.appendChild(sitBtn);
+const callBtn = document.createElement('button');
+callBtn.id = 'callPrompt';
+callBtn.type = 'button';
+callBtn.hidden = true;
+callBtn.textContent = 'Gọi agent';
+callBtn.addEventListener('click', (e) => { e.stopPropagation(); callAgent(); });
+document.body.appendChild(callBtn);
 let fpvYaw = 0, fpvPitch = 0;
 const fpvKeys = new Set();
 const fpvPos = new THREE.Vector3(0, 0, 3);
@@ -2253,7 +2260,7 @@ function enterSecurity() {
   endFishWatch();
   setFollow(-1);
   if (inSecurity) return;
-  if (myIsland !== 0) { toast('Rời bàn trước khi vào Security.'); return; }
+  if (myIsland !== 0) { toast('Rời bàn trước khi vào RAG.'); return; }
   setInSecurity(true);
   controls.enabled = false;
   setCamera(persp);
@@ -2275,7 +2282,7 @@ function enterSecurity() {
     frame.src = SECURITY_URL;
   }
   $('secureRoom').hidden = false;
-  $('hint').textContent = 'Security · Esc hoặc Thoát để rời phòng';
+  $('hint').textContent = 'RAG · Esc hoặc Thoát để rời phòng';
   $('secureExit').focus();
 }
 function leaveSecurity() {
@@ -2592,11 +2599,26 @@ function enterFpv(sx, sz, syaw) {
   $('vwalk').setAttribute('aria-pressed', 'true');
   buttons.forEach(b => { if (b.id !== 'vwalk') b.setAttribute('aria-pressed', 'false'); });
   setFollow(-1);
-  $('hint').textContent = 'WASD di chuyển · chuột nhìn · gần ghế bấm Ngồi xuống hoặc phím E · click người để vỗ vai · Esc thả chuột';
+  $('hint').textContent = 'WASD di chuyển · chuột nhìn · gần ghế bấm Ngồi xuống hoặc E · Gọi agent hoặc phím G · Esc thả chuột';
+  callBtn.hidden = false;
   setWalkView(true);
   setCamera(persp); controls.enabled = false; labelsEl.hidden = true; setTween(null);
   canvas.requestPointerLock();
   announceWalk();
+}
+function callAgent() {
+  let x, z;
+  if (fpv) { x = fpvPos.x; z = fpvPos.z; }
+  else if (myIsland) {
+    const s = seatOf(myIsland, mySlot);
+    if (!s) return;
+    x = s.x; z = s.z;
+  } else {
+    toast('Đi dạo hoặc ngồi xuống rồi hãy gọi agent.');
+    return;
+  }
+  const name = summonAgent(x, z);
+  if (name) toast('Agent ' + name + ' đang chạy tới.');
 }
 function sitFromWalk() {
   if (!fpv || !sitNear) return;
@@ -2608,6 +2630,7 @@ function exitFpv() {
   if (!fpv) return;
   fpv = false; fpvKeys.clear();
   sitNear = null; sitBtn.hidden = true;
+  callBtn.hidden = true;
   setWalkView(false);
   $('crosshair').hidden = true;
   $('vwalk').setAttribute('aria-pressed', 'false');
@@ -2818,6 +2841,7 @@ document.addEventListener('keydown', (e) => {
   const tag = e.target && e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   if (e.code === 'KeyE' && fpv && sitNear) { e.preventDefault(); sitFromWalk(); return; }
+  if (e.code === 'KeyG' && (fpv || myIsland > 0)) { e.preventDefault(); callAgent(); return; }
   if (e.code === 'KeyT' && !$('tapNotice').hidden) { e.preventDefault(); goToTapper(); return; }
   if (e.code === 'KeyY' || e.code === 'Enter') {
     if (!$('tapAsk').hidden) { e.preventDefault(); $('tapYes').click(); }
@@ -2906,6 +2930,8 @@ $('tapNo').addEventListener('click', () => {
 });
 $('btnConvoEnd').addEventListener('click', () => leaveConvo());
 $('vwalk').addEventListener('click', () => enterFpv());
+$('btnCallAgent').addEventListener('click', callAgent);
+$('btnCallAgentRoom').addEventListener('click', callAgent);
 $('vhome').addEventListener('click', () => { exitFpv(); go('v3d'); });
 $('btnBc').addEventListener('click', () => {
   if (pairPeer) { toast('Đang nói riêng — Kết thúc trước đã.'); return; }
