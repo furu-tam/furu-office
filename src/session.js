@@ -54,6 +54,18 @@ let localMeter = null;
 const remoteMeters = new Map();
 const MIC_HTML = '<span class="mic" hidden aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5.3-3A5.3 5.3 0 0 1 12 16.2 5.3 5.3 0 0 1 6.7 11H5a7 7 0 0 0 6 6.7V21h2v-3.3A7 7 0 0 0 19 11h-1.7z"/></svg><i></i><i></i><i></i></span>';
 let peers = {};
+// log sự kiện kết nối cho debug panel (?debug=1 hoặc phím `) — persist vào
+// localStorage để sống qua reload; bấm c trong panel là copy hết để gửi Devin.
+const dbgLog = [];
+function dbgEv(msg) {
+  const line = new Date().toLocaleTimeString('en-GB') + ' ' + msg;
+  dbgLog.push(line);
+  if (dbgLog.length > 200) dbgLog.shift();
+  try { localStorage.setItem('furu-dbgl', JSON.stringify(dbgLog.slice(-200))); } catch (e) {}
+}
+const pidShort = (pid) => String(pid || '').slice(-6);
+try { const prev = JSON.parse(localStorage.getItem('furu-dbgl') || '[]'); if (Array.isArray(prev)) dbgLog.push.apply(dbgLog, prev.slice(-200)); } catch (e) {}
+dbgEv('— boot ' + myId + ' —');
 let myPeer = null;
 let broadcastOn = false;   // đang nói cho cả đảo
 let dnd = false;           // không làm phiền: khóa mic/cam, im lặng, từ chối mọi lời mời
@@ -228,6 +240,7 @@ function deliverTap(msg) {
   tapFrom = msg.from;
   const sender = people.get(msg.from);
   if (sender) sender.bump = performance.now();
+  pushNotif('tap', name, { id: msg.from });
   const box = $('tapNotice');
   box.hidden = false;
   box.querySelector('span').textContent = name + ' đang gọi bạn.';
@@ -693,6 +706,8 @@ function enterDesk(index, slot) {
   setFollow(-1);
   setMyIsland(index + 1);
   mySlot = slot;
+  dbgEv('sit đảo' + (index + 1) + ' chỗ' + slot);
+  try { localStorage.setItem('furu-office-seat', JSON.stringify({ i: myIsland, s: mySlot, t: Date.now() })); } catch (e) {}
   const island = islands[index];
   const quiet = !!island.quiet;
   document.body.classList.toggle('in-room', !quiet);
@@ -737,6 +752,7 @@ function enterDesk(index, slot) {
 }
 function leaveDesk(silent) {
   if (myIsland === 0) return;
+  dbgEv('leave đảo' + myIsland);
   stopShare();
   if (pairPeer) exitPair();
   if (pairOut) { clearTimeout(pairOut.timer); pairOut = null; }
@@ -765,6 +781,7 @@ function leaveDesk(silent) {
   micOn = false;
   camOn = false;
   setMyIsland(0);
+  try { localStorage.removeItem('furu-office-seat'); } catch (e) {}
   document.body.classList.remove('in-room');
   applyChrome();
   $('dockView').hidden = false;
@@ -793,8 +810,11 @@ function leaveDesk(silent) {
   if (!silent) toast('Bạn đã rời bàn.');
 }
 
+let iceAt = 0;
 function iceServers() {
-  if (iceReady) return iceReady;
+  // TURN creds có hạn — tab mở lâu >12h mà dùng lại creds cũ thì call mới fail ICE
+  if (iceReady && Date.now() - iceAt < 12 * 3600e3) return iceReady;
+  iceAt = Date.now();
   iceReady = (async () => {
     const extra = [];
     if (TURN_API_KEY && TURN_APP) {
@@ -1111,6 +1131,39 @@ function pushStream() {
     dial(row.peerId);
   });
 }
+// Tab bị OS ngủ/discard rồi tỉnh lại có thể khiến audio track 'ended' ngầm —
+// sender vẫn gửi track chết nên bên kia nghe im lặng (lỗi nghe 1 chiều).
+// Watchdog: track mic chết hết thì lấy lại stream và đẩy vào call mới.
+let micReacquiring = false;
+function reacquireMic() {
+  if (micReacquiring) return;
+  const md = navigator.mediaDevices;
+  if (!md || !md.getUserMedia) return;
+  micReacquiring = true;
+  dbgEv('mic reacquire');
+  md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false })
+    .catch(() => md.getUserMedia({ audio: true, video: false }))
+    .then((stream) => {
+      if (!micOn) { stream.getTracks().forEach((t) => t.stop()); return; }
+      const old = localStream;
+      localStream = stream;
+      if (old) old.getTracks().forEach((t) => {
+        try { if (t.readyState === 'live' && t.kind === 'video') localStream.addTrack(t); else t.stop(); } catch (e) {}
+      });
+      pushStream();
+      walkCalls.forEach((call, wid) => { try { call.close(); } catch (e) {} walkCalls.delete(wid); });
+      convoSet.forEach((wid) => setTimeout(() => dialWalk(wid), 300));
+      updateSelf();
+      sendState();
+      toast('Mic vừa tự nối lại.');
+      dbgEv('mic reacquired');
+    })
+    .catch(() => {})
+    .finally(() => { micReacquiring = false; });
+}
+setInterval(() => {
+  if (micOn && localStream && !localStream.getAudioTracks().some((t) => t.readyState === 'live')) reacquireMic();
+}, 4000);
 async function ensureVideo() {
   if (localStream && localStream.getVideoTracks().some((t) => t.readyState === 'live')) {
     localStream.getVideoTracks().forEach((t) => { t.enabled = true; });
@@ -1274,15 +1327,25 @@ function onChat(cm) {
   if (!cm || cm.kind !== 'msg' || !cm.text) return;
   appendChat(cm.from, cm.name, cm.text, false);
 }
-function appendChat(from, name, text, note) {
+const CHAT_GAP_MS = 10 * 60e3;
+let lastChatT = 0;
+const fmtTime = (t) => { const d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); };
+function appendChat(from, name, text, note, t) {
   const box = $('chatMsgs');
+  const ts = t || Date.now();
+  if (lastChatT && ts - lastChatT > CHAT_GAP_MS) {
+    const hr = document.createElement('hr');
+    hr.className = 'chat-gap';
+    box.appendChild(hr);
+  }
+  lastChatT = ts;
   const mine = from === myId;
   const row = people.get(from);
   const island = row && islandOf(row.table);
   const place = island ? ' · ' + island.label : '';
   const m = document.createElement('div');
   m.className = 'msg' + (mine ? ' me' : '');
-  m.innerHTML = '<span class="who-name">' + esc(mine ? 'Bạn' : (name || 'Đồng nghiệp')) + esc(place) + ':</span> ' + esc(text);
+  m.innerHTML = '<span class="ts">' + fmtTime(ts) + '</span><span class="who-name">' + esc(mine ? 'Bạn' : (name || 'Đồng nghiệp')) + esc(place) + ':</span> ' + esc(text);
   box.appendChild(m);
   while (box.children.length > 80) box.removeChild(box.firstChild);
   box.scrollTop = box.scrollHeight;
@@ -1317,13 +1380,13 @@ function onSay(msg, relay, fromLog) {
   if (fresh) {
     seenSay.add(id);
     if (seenSay.size > 120) seenSay.delete(seenSay.values().next().value);
-    const entry = { id, from: msg.from, name: msg.name, text };
+    const entry = { id, from: msg.from, name: msg.name, text, t: msg.t || Date.now() };
     roomLog.push(entry);
     if (roomLog.length > 30) roomLog.shift();
-    appendChat(msg.from, msg.name, text, !fromLog);
+    appendChat(msg.from, msg.name, text, !fromLog, msg.t);
     if (!fromLog) showBubble(msg.from, msg.name, text);
   }
-  if (relay && floorHost) broadcastFloor({ kind: 'say', id, from: msg.from, name: msg.name, text });
+  if (relay && floorHost) broadcastFloor({ kind: 'say', id, from: msg.from, name: msg.name, text, t: msg.t });
 }
 function sendSay(text) {
   const msg = {
@@ -1331,7 +1394,8 @@ function sendSay(text) {
     id: myId + '-' + Date.now().toString(36),
     from: myId,
     name: myName(),
-    text: String(text).slice(0, 300)
+    text: String(text).slice(0, 300),
+    t: Date.now()
   };
   onSay(msg, floorHost, false);
   if (floorHost) return;
@@ -1348,6 +1412,78 @@ function setChatNote(n) {
   });
 }
 function clearChatNote() { setChatNote(0); }
+// ---------- chuông thông báo: giữ lại ai vỗ vai/mời khi đang bận, kèm giờ + Đi tới ----------
+const notifList = [];
+let bellUnread = 0;
+try {
+  const prev = JSON.parse(localStorage.getItem('furu-notif') || '[]');
+  if (Array.isArray(prev)) prev.slice(0, 30).forEach((n) => { if (n && n.t) notifList.push(n); });
+} catch (e) {}
+function saveNotif() { try { localStorage.setItem('furu-notif', JSON.stringify(notifList.slice(0, 30))); } catch (e) {} }
+const NOTIF_TEXT = { tap: 'vỗ vai bạn', invite: 'mời bạn nói chuyện', pair: 'mời bạn nói riêng' };
+function pushNotif(kind, name, ref) {
+  notifList.unshift({ t: Date.now(), kind, name: String(name || 'Ai đó').slice(0, 24), ...(ref || {}) });
+  if (notifList.length > 30) notifList.pop();
+  saveNotif();
+  renderBell();
+  const panel = $('bellPanel');
+  if (panel && panel.hidden) {
+    bellUnread++;
+    const b = $('btnBell');
+    b.classList.add('has-note');
+    b.dataset.n = bellUnread > 9 ? '9+' : String(bellUnread);
+  }
+}
+function renderBell() {
+  const list = $('bellList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!notifList.length) {
+    const d = document.createElement('div');
+    d.className = 'bell-empty';
+    d.textContent = 'Chưa có thông báo.';
+    list.appendChild(d);
+    return;
+  }
+  notifList.forEach((n) => {
+    const d = document.createElement('div');
+    d.className = 'bell-item';
+    const row = n.id ? people.get(n.id) : (n.wid ? rowByWalk(n.wid) : null);
+    const canGo = !!(row && posOf(row));
+    d.innerHTML = '<span class="ts">' + fmtTime(n.t) + '</span><span class="tx"><b>' + esc(n.name) + '</b> ' + esc(NOTIF_TEXT[n.kind] || n.kind) + '</span>';
+    const btn = document.createElement('button');
+    if (n.used) {
+      d.classList.add('used');
+      btn.textContent = 'đã đi';
+      btn.disabled = true;
+    } else {
+      btn.textContent = canGo ? 'Đi tới' : 'đã rời';
+      btn.disabled = !canGo;
+      if (canGo) btn.addEventListener('click', () => {
+        n.used = true;
+        saveNotif();
+        $('bellPanel').hidden = true;
+        goToRow(row);
+      });
+    }
+    d.appendChild(btn);
+    list.appendChild(d);
+  });
+}
+if ($('btnBell')) {
+  $('btnBell').addEventListener('click', () => {
+    const panel = $('bellPanel');
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) {
+      bellUnread = 0;
+      const b = $('btnBell');
+      b.classList.remove('has-note');
+      delete b.dataset.n;
+      renderBell();
+    }
+  });
+  renderBell();
+}
 function refreshConnText() {
   if (myIsland === 0) return;
   const n = Object.keys(peers).length;
@@ -1433,6 +1569,7 @@ function openPeerAttempt(gen, n, ice, tries) {
       }
     };
     const to = setTimeout(() => fail('Mạng chậm — bấm Bật tiếng để thử lại', true), 8000);
+    dbgEv('peer try' + (tries + 1) + ' ' + id);
     p.on('open', () => {
       if (settled) return;
       settled = true;
@@ -1440,6 +1577,7 @@ function openPeerAttempt(gen, n, ice, tries) {
       peerOpening = null;
       if (gen !== claimGen || myIsland !== n) { try { p.destroy(); } catch (e) {} resolve(); return; }
       myPeer = p;
+      dbgEv('peer open ' + id);
       wireMyPeer();
       announceSeat();
       dialKnown();
@@ -1452,6 +1590,7 @@ function openPeerAttempt(gen, n, ice, tries) {
       if (settled && myPeer !== p) return;   // peer thua cuộc, đã có peer khác sống
       if (myPeer === p) { handlePeerError(err); return; }
       console.warn('[peer] open lỗi:', err && err.type, 'lần', tries + 1);
+      dbgEv('peer err ' + (err && err.type) + ' try' + (tries + 1));
       fail('Chưa nối được cuộc gọi — bạn vẫn ngồi ở bàn. Bấm Bật tiếng để thử lại.', !(err && PEER_FATAL[err.type]));
     });
   });
@@ -1508,23 +1647,34 @@ function dialKnown() {
     dial(row.peerId, 0);
   });
 }
+// call còn sống? call.open chỉ nói signaling xong — ICE failed/closed cũng phải
+// coi như chết, kẻo guard `entry.call` chặn re-dial mãi mãi sau khi rời/vào lại bàn.
+function callLive(call) {
+  if (!call || !call.open) return false;
+  const pc = call.peerConnection;
+  if (!pc) return true;
+  const s = pc.connectionState || pc.iceConnectionState || '';
+  return s !== 'failed' && s !== 'closed';
+}
 function dial(pid, tries) {
   if (!myPeer || !pid || pid === myPeer.id || myIsland === 0) return;
   const row = seatByPeer(pid);
   const entry = getEntry(pid);
   if (row) { entry.name = row.name || entry.name; entry.slot = row.slot || entry.slot; }
+  if (entry.conn && !entry.conn.open) entry.conn = null;
+  if (entry.call && !callLive(entry.call)) { entry.call = null; entry.remoteStream = null; }
   const pendingFresh = entry.pending && performance.now() - entry.pendingAt < 5000;
   if (!entry.conn && !pendingFresh) {
     if (entry.pending) { try { entry.pending.close(); } catch (e) {} entry.pending = null; }
     try {
       const conn = myPeer.connect(pid, { reliable: true });
-      if (conn) { entry.pending = conn; entry.pendingAt = performance.now(); wireConn(pid, conn); }
+      if (conn) { entry.pending = conn; entry.pendingAt = performance.now(); wireConn(pid, conn); dbgEv('conn> ' + pidShort(pid)); }
     } catch (e) {}
   }
   if (localStream && !entry.call) {
     try {
       const call = myPeer.call(pid, localStream);
-      if (call) attachCall(pid, call, tries || 0);
+      if (call) { attachCall(pid, call, tries || 0); dbgEv('call> ' + pidShort(pid)); }
     } catch (e) {}
   }
 }
@@ -1536,14 +1686,19 @@ function watchDials() {
     people.forEach((row) => {
       if (row.table !== myIsland || row.id === myId || !row.peerId) return;
       const entry = peers[row.peerId];
-      if (entry && entry.conn && entry.conn.open && (!localStream || entry.call)) return;
+      if (entry && entry.conn && entry.conn.open && (!localStream || callLive(entry.call))) return;
       dial(row.peerId, 0);
     });
   }, 2500);
 }
+function killCall(pid, call) {
+  const cur = peers[pid];
+  if (cur && cur.call === call) { cur.call = null; cur.remoteStream = null; refreshScreens(); }
+}
 function attachCall(pid, call, tries) {
   const entry = getEntry(pid);
   entry.call = call;
+  const redial = () => { if (myIsland > 0) setTimeout(() => { if (myIsland > 0) dial(pid, (tries || 0) + 1); }, 1000); };
   call.on('stream', (rs) => {
     const cur = peers[pid];
     if (!cur) return;
@@ -1553,16 +1708,23 @@ function attachCall(pid, call, tries) {
     }
     cur.call = call;
     cur.remoteStream = rs;
+    dbgEv('stream< ' + pidShort(pid));
     refreshScreens();
   });
-  call.on('close', () => {
-    const cur = peers[pid];
-    if (cur && cur.call === call) { cur.call = null; cur.remoteStream = null; refreshScreens(); }
+  call.on('close', () => { killCall(pid, call); dbgEv('call- ' + pidShort(pid)); });
+  call.on('iceStateChanged', (st) => {
+    dbgEv('ice ' + pidShort(pid) + '=' + st);
+    if (st === 'failed' || st === 'closed') { killCall(pid, call); redial(); }
+    else if (st === 'disconnected') setTimeout(() => {
+      const pc = call.peerConnection;
+      const s = pc && (pc.connectionState || pc.iceConnectionState);
+      if ((s === 'disconnected' || s === 'failed') && peers[pid] && peers[pid].call === call) { killCall(pid, call); if (myIsland > 0) dial(pid, (tries || 0) + 1); }
+    }, 4000);
   });
   call.on('error', (err) => {
     const type = err && err.type;
-    const cur = peers[pid];
-    if (cur && cur.call === call) cur.call = null;
+    dbgEv('call err ' + pidShort(pid) + ' ' + type);
+    killCall(pid, call);
     if ((type === 'peer-unavailable' || type === 'network' || type === 'server-error' || type === 'socket-error') && myIsland > 0) {
       setTimeout(() => { if (myIsland > 0) dial(pid, (tries || 0) + 1); }, 1200);
     }
@@ -1574,6 +1736,7 @@ function wireConn(pid, conn) {
     if (entry.conn && entry.conn !== conn && entry.conn.open) { try { conn.close(); } catch (e) {} return; }
     entry.conn = conn;
     entry.pending = null;
+    dbgEv('conn+ ' + pidShort(pid));
     sendTo(entry, { kind: 'hello', name: myName(), mic: micOn, cam: camOn, bc: broadcastOn, dnd });
     if (localStream && !entry.call) dial(pid, 0);
     refreshScreens();
@@ -1624,6 +1787,8 @@ function handleData(pid, m) {
       return;
     }
     pairIn = { pid, timer: setTimeout(() => declinePair(pid, true), 15000) };
+    const prow = seatByPeer(pid);
+    pushNotif('pair', String(m.name || entry.name || 'Ai đó').slice(0, 24), { id: prow && prow.id });
     showPairAsk(String(m.name || entry.name || 'Ai đó').slice(0, 24));
   } else if (m.kind === 'pair-accept') {
     if (pairOut && pairOut.pid === pid) { clearTimeout(pairOut.timer); pairOut = null; enterPair(pid); }
@@ -1923,10 +2088,41 @@ function destroyFloor() {
 function peerOpts(ice) {
   return { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true };
 }
+let reprobeAt = performance.now();
+// Probe thử hub i có host nào trả lời beat không (peer ẩn danh, dùng xong destroy).
+function probeAlive(index, done) {
+  iceServers().then((ice) => {
+    let p;
+    try { p = new Peer(undefined, peerOpts(ice)); } catch (e) { done(false); return; }
+    let settled = false;
+    const fin = (ok) => { if (settled) return; settled = true; try { p.destroy(); } catch (e) {} done(ok); };
+    const to = setTimeout(() => fin(false), 8000);
+    p.on('open', () => {
+      const conn = p.connect(HUBS[index], { reliable: true });
+      conn.on('open', () => { try { conn.send({ kind: 'ping' }); } catch (e) {} });
+      conn.on('data', (m) => { if (m && (m.kind === 'beat' || m.kind === 'roster')) { clearTimeout(to); fin(true); } });
+      conn.on('close', () => fin(false));
+      conn.on('error', () => fin(false));
+    });
+    p.on('error', () => fin(false));
+  });
+}
 function startFloorWatch(gen) {
   clearInterval(floorTimer);
   floorTimer = setInterval(() => {
     if (gen !== floorGen) return;
+    // Hội tụ về hub số thấp nhất còn sống: host chết mà giữ ID hub thấp sẽ làm
+    // floor tách thành nhiều hub song song — ai thấy hub thấp sống lại thì claimFloor() quay về.
+    if (floorHub > 0 && performance.now() - reprobeAt > 40000) {
+      reprobeAt = performance.now();
+      (function tryLower(i) {
+        if (i < 0 || gen !== floorGen || floorHub === 0) return;
+        probeAlive(i, (ok) => {
+          if (ok && gen === floorGen && floorHub > 0) { dbgEv('floor converge hub' + i); claimFloor(); }
+          else if (gen === floorGen) tryLower(i - 1);
+        });
+      })(floorHub - 1);
+    }
     if (floorHost) {
       broadcastFloor({ kind: 'beat', t: Date.now() });
       const now = performance.now();
@@ -1950,6 +2146,7 @@ function becomeHost(gen, p, index) {
   floorHub = index;
   lastBeat = performance.now();
   noteFloor(true);
+  dbgEv('floor host hub' + index);
   p.on('connection', (conn) => {
     floorConns.push(conn);
     conn.on('open', () => {
@@ -1989,6 +2186,7 @@ function becomeClient(gen, p, conn, index) {
   floorHub = index;
   lastBeat = performance.now();
   noteFloor(true);
+  dbgEv('floor join hub' + index);
   const msg = (pendingPresence && pendingPresence.kind !== 'move')
     ? pendingPresence
     : (myPresence ? { kind: 'here', who: myPresence } : pendingPresence);
@@ -2775,6 +2973,7 @@ function handleWalkData(wid, d) {
     }
     if (tapIn) clearTimeout(tapIn.timer);
     tapIn = { walkId: wid, name: d.name || 'Ai đó' };
+    pushNotif('invite', tapIn.name, { wid });
     $('tapAskText').textContent = tapIn.name + ' vỗ vai bạn — nói chuyện?';
     $('tapAsk').hidden = false;
     tapIn.timer = setTimeout(() => { $('tapAsk').hidden = true; tapIn = null; }, 15000);
@@ -2815,9 +3014,8 @@ function sendInvite(row) {
     toast('Đã vỗ vai ' + row.name + ' — chờ nhận');
   });
 }
-// --- nút Đi tới trên tapNotice: teleport ra sau lưng người vỗ vai rồi auto mời ---
-function goToTapper() {
-  const row = people.get(tapFrom);
+// --- nút Đi tới trên tapNotice/chuông: teleport ra sau lưng người vỗ vai rồi auto mời ---
+function goToRow(row) {
   $('tapNotice').hidden = true;
   if (!row) { toast('Không thấy người đã vỗ vai nữa.'); return; }
   const p = posOf(row);
@@ -2834,6 +3032,7 @@ function goToTapper() {
   else enterFpv(x, z, yaw);
   if (row.walkId) setTimeout(() => sendInvite(row), 400);
 }
+function goToTapper() { goToRow(people.get(tapFrom)); }
 $('tapGo').addEventListener('click', goToTapper);
 // FPV giữ pointer lock nên không click được nút — phím tắt cho các dialog:
 // T = đi tới người vỗ vai · Y/Enter = nhận · N = từ chối.
@@ -2841,6 +3040,7 @@ document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const tag = e.target && e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.code === 'Escape' && $('bellPanel') && !$('bellPanel').hidden) { $('bellPanel').hidden = true; return; }
   if (e.code === 'KeyE' && fpv && sitNear) { e.preventDefault(); sitFromWalk(); return; }
   if (e.code === 'KeyG' && (fpv || myIsland > 0)) { e.preventDefault(); callAgent(); return; }
   if (e.code === 'KeyT' && !$('tapNotice').hidden) { e.preventDefault(); goToTapper(); return; }
@@ -2947,6 +3147,17 @@ $('pairYes').addEventListener('click', acceptPair);
 $('pairNo').addEventListener('click', () => { if (pairIn) declinePair(pairIn.pid); });
 
 loadPeerLib().then((ok) => { if (ok) claimFloor(); });
+// Chrome tự reload tab bị discard khi focus lại — tự ngồi lại chỗ cũ (<12h) để
+// trải nghiệm như chưa chết. Không restore FPV (auto-grab chuột rất khó chịu).
+try {
+  const sv = JSON.parse(localStorage.getItem('furu-office-seat') || 'null');
+  if (sv && sv.i > 0 && Date.now() - sv.t < 12 * 3600e3) {
+    setTimeout(() => {
+      const used = takenSlots(sv.i - 1);
+      joinDesk(sv.i - 1, used.has(sv.s) ? -1 : sv.s - 1);
+    }, 1200);
+  }
+} catch (e) {}
 
 
 
@@ -2965,6 +3176,24 @@ hooks.mySlot = () => mySlot;
 hooks.isHost = () => floorHost;
 hooks.sendFloor = (msg) => { if (floorLink && floorLink.open) { try { floorLink.send(msg); } catch (e) {} } };
 hooks.posOf = (r) => posOf(r);
+hooks.debug = () => ({
+  myId, island: myIsland, slot: mySlot, dnd, fpv, micOn, camOn, bc: broadcastOn,
+  peer: myPeer ? { id: myPeer.id, open: myPeer.open, destroyed: myPeer.destroyed, disconn: myPeer.disconnected } : null,
+  opening: !!peerOpening,
+  stream: localStream ? localStream.getTracks().map((t) => t.kind + ':' + (t.enabled ? 'on' : 'off') + '/' + t.readyState) : null,
+  peers: Object.values(peers).map((e) => ({
+    pid: e.peerId, name: e.name,
+    conn: e.conn ? (e.conn.open ? 'open' : 'dead') : (e.pending ? 'pending' : '-'),
+    call: e.call ? { open: !!e.call.open, ice: e.call.peerConnection ? (e.call.peerConnection.connectionState || e.call.peerConnection.iceConnectionState) : '-' } : null,
+    rx: e.remoteStream ? e.remoteStream.getTracks().map((t) => t.kind[0] + ':' + t.readyState).join('+') : '-',
+    gain: +hearingGain(e.peerId).toFixed(2),
+  })),
+  floor: { host: floorHost, link: floorLink ? floorLink.open : null, conns: floorConns.length, people: people.size },
+  walk: { peer: walkPeer ? walkPeer.id : null, convo: convoSet.size, conns: wconns.size, streams: walkStreams.size, calls: walkCalls.size },
+  log: dbgLog.slice(-24),
+});
+hooks.dbgEv = dbgEv;
+hooks.dbgLog = () => dbgLog.slice();
 hooks.upsertSeat = upsertSeat;
 hooks.removeSeat = removeSeat;
 hooks.people = () => people;

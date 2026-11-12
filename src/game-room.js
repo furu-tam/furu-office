@@ -185,7 +185,7 @@ function upsertSeat(slot, info) {
     g.position.set(seat.x, 0, seat.z);
     g.rotation.y = seat.yaw;
     const avatar = buildCharacter(look);
-    avatar.root.position.z = -0.16;
+    avatar.root.position.z = -0.05;
     g.add(avatar.root);
     peopleRoot.add(g);
     row.body = g;

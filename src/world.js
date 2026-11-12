@@ -286,7 +286,7 @@ function solidWall(x0, z0, x1, z1, h, parent, m = mat.wall) {
 export function seated(parent, x, z, yaw, y0 = 0, look) {
   const g = new THREE.Group(); g.position.set(x, y0, z); g.rotation.y = yaw;
   const avatar = buildCharacter(clampLook(look) || randomLook());
-  avatar.root.position.z = -0.2;
+  avatar.root.position.z = -0.05;
   g.add(avatar.root);
   g.userData.avatar = avatar;
   parent.add(g); return g;

@@ -40,7 +40,14 @@ try {
   await B.goto(BASE);
   await A.waitForFunction(() => window.__bench, null, { timeout: 15000 });
   await B.waitForFunction(() => window.__bench, null, { timeout: 15000 });
-  await A.waitForTimeout(5000); // floor hub scan + connect
+  // chờ cả 2 có floor thật (host hoặc link) — hub thấp có thể bị ghost giữ nên scan chậm
+  const floorOk = (p) => p.waitForFunction(async () => {
+    const w = await import('/src/world.js');
+    const f = w.hooks.debug().floor;
+    return f.host || f.link === true;
+  }, null, { timeout: 45000, polling: 1000 });
+  await floorOk(A);
+  await floorOk(B);
 
   const aId = await A.evaluate(() => __bench.myId());
   const bId = await B.evaluate(() => __bench.myId());
@@ -49,7 +56,10 @@ try {
 
   // --- B ngồi -> A thấy seat row ---
   await B.evaluate(() => document.querySelector('.dtag .sit').click());
-  await B.waitForTimeout(2500);
+  await A.waitForFunction((i) => {
+    const r = __bench.rows().find((x) => x.id === i);
+    return r && r.kind === 'seat';
+  }, bId, { timeout: 15000, polling: 500 }).catch(() => {});
   const seated = await rowOn(A, bId);
   check('A thấy B ngồi (kind=seat)', seated && seated.kind === 'seat' && seated.walk === 0, seated && `t${seated.table}s${seated.slot}`);
 

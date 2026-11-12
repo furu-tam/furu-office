@@ -57,6 +57,18 @@ npm run bench          # node bench/run-bench.mjs run → bench/results-*.json
 Xem HUD realtime: mở `index.html?perf=1`, hoặc inspect roster qua
 `index.html?bench=1` rồi `__bench.rows()` trong console.
 
+## Debug kết nối
+
+Panel ruột PeerJS (peer/conn/call/ICE/stream/floor/walk + log sự kiện):
+
+- Mở `index.html?debug=1`, hoặc bấm phím `` ` `` (backquote) bất cứ lúc nào,
+  hoặc `localStorage['furu-dbg']='1'` rồi reload.
+- Panel ở góc trái dưới, cập nhật 2 lần/giây; `conn=dead`, `call=dead`,
+  `ice=failed` là dấu hiệu kết nối nửa vời cần chú ý.
+- **Gửi log cho Devin**: log persist trong localStorage (sống qua reload,
+  200 dòng, gồm cả lỗi JS/promise). Panel mở → bấm `c` → paste vào chat;
+  hoặc console `__dbgCopy()`.
+
 ## Kiến trúc nhanh
 
 - `src/world.js` — scene văn phòng, ghế, đảo, camera, agent; export `hooks` cho session.

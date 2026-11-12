@@ -33,6 +33,11 @@
 <div id="uiToggle">
   <button type="button" id="btnMenu" aria-pressed="true">Ẩn menu</button>
   <button type="button" id="btnChatToggle" aria-pressed="false">Hiện chat</button>
+  <button type="button" id="btnBell" aria-pressed="false" title="Thông báo"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 20a2 2 0 0 1-3.4 0"/></svg></button>
+</div>
+<div id="bellPanel" hidden>
+  <h3>Thông báo</h3>
+  <div id="bellList"></div>
 </div>
 <div class="dock" id="dockView" role="group" aria-label="Chế độ xem">
   <!-- <button id="v3d" type="button" aria-pressed="true">Phối cảnh 3D</button>
