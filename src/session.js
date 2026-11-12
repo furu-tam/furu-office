@@ -2949,6 +2949,15 @@ function joinConvo(wid, members) {
     convoSet.add(wid);
     dialWalk(wid);
     members.forEach((m) => { if (m !== myWalkId() && !convoSet.has(m)) { convoSet.add(m); setTimeout(() => dialWalk(m), 700); } });
+    // mesh hoá: báo member cũ biết có người mới (họ đợi call), báo người mới biết
+    // member cũ (nó chủ động dial) — nếu không convo chỉ là star qua người mời.
+    const cNew = wconns.get(wid);
+    convoSet.forEach((w) => {
+      if (w === wid) return;
+      const c = wconns.get(w);
+      try { if (c && c.open) c.send({ kind: 'convo-join', id: wid }); } catch (e) {}
+      try { if (cNew && cNew.open) cNew.send({ kind: 'convo-join', id: w, dial: 1 }); } catch (e) {}
+    });
     $('btnConvoEnd').hidden = false;
     applyGains(); applyWalkGains();
     toast('Đang trò chuyện' + (convoSet.size > 1 ? ' · ' + convoSet.size + ' người' : ''));
@@ -2984,7 +2993,14 @@ function handleWalkData(wid, d) {
   } else if (d.kind === 'invite-busy') {
     toast(d.reason === 'dnd' ? 'Người đó đang bật Không làm phiền' : d.reason === 'convo' ? 'Người đó đang trong cuộc trò chuyện khác' : 'Người đó đang nói riêng');
   } else if (d.kind === 'convo-join') {
-    if (convoSet.size) { convoSet.add(d.id); pendingWalk.add(d.id); applyWalkGains(); }
+    if (convoSet.size) {
+      convoSet.add(d.id);
+      // dial=1: mình là người mới, chủ động gọi member cũ; không thì chỉ duyệt sẵn call vào
+      if (d.dial) setTimeout(() => dialWalk(d.id), 600);
+      else pendingWalk.add(d.id);
+      $('btnConvoEnd').hidden = false;
+      applyWalkGains();
+    }
   } else if (d.kind === 'convo-leave') {
     const c = walkCalls.get(d.id); try { if (c) c.close(); } catch (e) {}
     dropWalkPeer(d.id);
@@ -3178,6 +3194,8 @@ hooks.mySlot = () => mySlot;
 hooks.isHost = () => floorHost;
 hooks.sendFloor = (msg) => { if (floorLink && floorLink.open) { try { floorLink.send(msg); } catch (e) {} } };
 hooks.posOf = (r) => posOf(r);
+hooks.sendInviteRow = (id) => sendInvite(people.get(id));
+hooks.convoSet = () => [...convoSet];
 hooks.debug = () => ({
   myId, island: myIsland, slot: mySlot, dnd, fpv, micOn, camOn, bc: broadcastOn,
   peer: myPeer ? { id: myPeer.id, open: myPeer.open, destroyed: myPeer.destroyed, disconn: myPeer.disconnected } : null,
