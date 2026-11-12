@@ -31,17 +31,19 @@ const browser = await chromium.launch({
 const ctx = await browser.newContext({ permissions: ['microphone', 'camera'] });
 await ctx.addInitScript((l) => { localStorage.setItem('furu-office-look', JSON.stringify({ ...l, name: 'T' })); }, LOOK);
 
-const A = await ctx.newPage(), B = await ctx.newPage();
-for (const [tag, p] of [['A', A], ['B', B]]) {
+const A = await ctx.newPage(), B = await ctx.newPage(), C = await ctx.newPage();
+for (const [tag, p] of [['A', A], ['B', B], ['C', C]]) {
   p.on('pageerror', (e) => console.log(`[${tag} pageerror]`, e.message));
 }
 
 try {
   await A.goto(BASE);
   await B.goto(BASE);
+  await C.goto(BASE);
   await A.waitForFunction(() => window.__bench, null, { timeout: 15000 });
   await B.waitForFunction(() => window.__bench, null, { timeout: 15000 });
-  // chờ cả 2 có floor thật (host hoặc link) — hub thấp có thể bị ghost giữ nên scan chậm
+  await C.waitForFunction(() => window.__bench, null, { timeout: 15000 });
+  // chờ cả 3 có floor thật (host hoặc link) — hub thấp có thể bị ghost giữ nên scan chậm
   const floorOk = (p) => p.waitForFunction(async () => {
     const w = await import('/src/world.js');
     const f = w.hooks.debug().floor;
@@ -49,9 +51,11 @@ try {
   }, null, { timeout: 45000, polling: 1000 });
   await floorOk(A);
   await floorOk(B);
+  await floorOk(C);
 
   const aId = await A.evaluate(() => __bench.myId());
   const bId = await B.evaluate(() => __bench.myId());
+  const cId = await C.evaluate(() => __bench.myId());
   const rowOn = (p, id) => p.evaluate((i) => __bench.rows().find((r) => r.id === i), id);
   console.log(`A=${aId} B=${bId}`);
 
@@ -96,6 +100,33 @@ try {
   const teleported = await rowOn(A, bId);
   const dTele = teleported && aSeat && Math.hypot(teleported.px - aSeat.px, teleported.pz - aSeat.pz);
   check('B bấm T teleport tới gần A (vẫn trong FPV)', teleported && teleported.walk === 1 && dTele < 3.5, teleported && `d=${dTele?.toFixed(2)}m`);
+
+  // --- convo mesh: A,B,C cùng đi dạo GẦN NHAU; A mời B rồi mời C -> 3 người phải thấy nhau ---
+  // enterFpv() spawn về (0,4) — B đang đứng cạnh ghế của A nên phải vào lại FPV để về chung spawn,
+  // nếu không B "đi quá xa" khỏi nhóm và bị convoFar tự đá sau ~5s (đúng thiết kế).
+  await A.evaluate(() => document.getElementById('vwalk').click());
+  await C.evaluate(() => document.getElementById('vwalk').click());
+  await B.evaluate(() => document.getElementById('vhome').click());
+  await B.waitForTimeout(700);
+  await B.evaluate(() => document.getElementById('vwalk').click());
+  await B.waitForTimeout(2500);
+  const wid = (id) => 'furuoff-w-' + id;
+  const convoOf = (p) => p.evaluate(() => __bench.convo());
+  await A.evaluate((id) => __bench.invite(id), bId);
+  await B.waitForFunction(() => !document.getElementById('tapAsk').hidden, null, { timeout: 10000 });
+  await B.evaluate(() => document.getElementById('tapYes').click());
+  await B.waitForTimeout(2500);
+  const [convA1, convB1] = [await convoOf(A), await convoOf(B)];
+  check('A-B convo sau khi mời + nhận', convA1.includes(wid(bId)) && convB1.includes(wid(aId)), `A:${convA1} B:${convB1}`);
+  await A.evaluate((id) => __bench.invite(id), cId);
+  await C.waitForFunction(() => !document.getElementById('tapAsk').hidden, null, { timeout: 10000 });
+  await C.evaluate(() => document.getElementById('tapYes').click());
+  await C.waitForTimeout(6500); // > ngưỡng convoFar 5s — chứng minh mesh bền, không chỉ hình thành
+  const [convA2, convB2, convC2] = [await convoOf(A), await convoOf(B), await convoOf(C)];
+  const mesh = convA2.includes(wid(bId)) && convA2.includes(wid(cId))
+    && convB2.includes(wid(aId)) && convB2.includes(wid(cId))
+    && convC2.includes(wid(aId)) && convC2.includes(wid(bId));
+  check('convo mesh 3 người (mọi cặp đều có call)', mesh, `A:${convA2} B:${convB2} C:${convC2}`);
 
   // --- B thoát FPV (Home) -> row biến mất phía A ---
   await B.evaluate(() => document.getElementById('vhome').click());

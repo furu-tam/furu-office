@@ -81,6 +81,8 @@ const api = {
   },
   // Gửi 1 gói floor message thật (tap/say...) — host thì broadcast, client thì gửi lên host.
   floor(msg) { if (hooks.isHost()) hooks.broadcastFloor(msg); else hooks.sendFloor(msg); },
+  invite(id) { hooks.sendInviteRow(id); },
+  convo() { return hooks.convoSet(); },
   clear() {
     for (const child of [...G.people.children]) {
       const id = child.userData.personId;

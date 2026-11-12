@@ -22,6 +22,8 @@ export const hooks = {
   mySlot() { return 0; },
   isHost() { return false; },
   sendFloor() {},
+  sendInviteRow() {},
+  convoSet() { return []; },
 };
 
 // Units: 1 = 1 m. Floor top at y = 0 (3rd floor). Sea lies toward −Z, beach 12 m below.
