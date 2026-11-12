@@ -43,7 +43,9 @@ Lưu ý:
 
 - Cần server đang chạy ở `:8977` (đổi qua `BENCH_URL`).
 - Trình duyệt: mặc định Chrome for Testing; đổi qua `CHROME_BIN`.
-- Hub PeerJS là cloud dùng chung → đôi khi thấy người lạ trong roster, bình thường.
+- Test chạy trên floor riêng `furu-test-hub-*` (URL `?hub=furu-test`) — bot "T"
+  không bao giờ lọt vào phòng production. Muốn tách floor cho mục đích khác thì
+  đổi `?hub=<prefix>` — hub id trở thành `<prefix>-0..7`.
 - Tab bị ẩn/nền bị throttle rAF — hiện tượng giật/nhảy chỗ lúc test tay là đã biết;
   presence vẫn được duy trì bằng interval 250ms + heartbeat beat/pong 25s.
 

@@ -2067,7 +2067,9 @@ function onFloorData(msg, from) {
   }
   if (!floorHost && (msg.kind === 'here' || msg.kind === 'gone' || msg.kind === 'roster' || msg.kind === 'move')) applyPresence(msg, false);
 }
-const HUBS = ['furu-hub-0', 'furu-hub-1', 'furu-hub-2', 'furu-hub-3', 'furu-hub-4', 'furu-hub-5', 'furu-hub-6', 'furu-hub-7'];
+// ?hub=<prefix> tách floor — test/bench dùng hub riêng để bot khỏi lọt vào phòng thật
+const HUB_PREFIX = new URLSearchParams(location.search).get('hub') || 'furu-hub';
+const HUBS = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => HUB_PREFIX + '-' + i);
 let floorGen = 0;
 let floorPeer = null;
 let floorHost = false;
