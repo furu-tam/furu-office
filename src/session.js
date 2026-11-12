@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { BODY_ACC, EXCL, ROWS, buildWalker, clampLook, createPreview, disposeAvatar, freshLook, lookSig, normalizeLook, randomLook } from './avatar.js';
 
 import {
-  hooks, setCamera, setTween, setFollow, setMyIsland, setHoveredIsland, setWatchingFish, setInSecurity, setFishPose, setSecurityPose, setSecurityBlocked,
+  hooks, setCamera, setTween, setFollow, setMyIsland, setHoveredIsland, setWatchingFish, setInSecurity, setFishPose, setSecurityPose, setSecurityBlocked, setWalkView,
   AGENTS, AQ, G, REDUCED, SECURITY_URL, T, boat, box, burndownTex, buttons, camera, cancelMyCoffee, canvas, controls, desk, deskTagsEl, facesEl, fishBtn, fishPose, fishTag, follow, go, gulls, hoveredIsland, inSecurity, islands, labelsEl, meetingTvMat, meetingTvMesh, myIsland, onCoffeeOrder, orderCoffee, ortho, persp, pickers, rackMats, renderer, scene, seaMat, seated, securityBlocked, securityPose, securityTag, tags, tween, updateAgents, updateServer, watchingFish
 } from './world.js';
 
@@ -63,6 +63,15 @@ let pairIn = null;         // {pid, timer} invite tới đang chờ mình nhận
 let pairMutedCalls = [];   // các call đã tắt sender khi đang nói riêng
 // --- đi dạo FPV + vỗ vai mời + convo + nhạc cà phê ---
 let fpv = false;
+const SIT_RANGE = 1.45;
+let sitNear = null;
+const sitBtn = document.createElement('button');
+sitBtn.id = 'sitPrompt';
+sitBtn.type = 'button';
+sitBtn.hidden = true;
+sitBtn.textContent = 'Ngồi xuống';
+sitBtn.addEventListener('click', (e) => { e.stopPropagation(); sitFromWalk(); });
+document.body.appendChild(sitBtn);
 let fpvYaw = 0, fpvPitch = 0;
 const fpvKeys = new Set();
 const fpvPos = new THREE.Vector3(0, 0, 3);
@@ -464,6 +473,35 @@ export function placeOffice() {
       tapTagEl.style.top = ((1 - _pt.y) / 2 * h) + 'px';
     } else tapTagEl.hidden = true;
   } else tapTagEl.hidden = true;
+  if (fpv) {
+    let best = null, bd = SIT_RANGE;
+    islands.forEach((island, i) => {
+      const used = takenSlots(i);
+      island.seats.forEach((seat, s) => {
+        if (used.has(s + 1)) return;
+        const d = Math.hypot(fpvPos.x - seat.x, fpvPos.z - seat.z);
+        if (d < bd) { bd = d; best = { island: i, slot: s, seat }; }
+      });
+    });
+    sitNear = best;
+    if (!best) sitBtn.hidden = true;
+    else {
+      _pt.set(best.seat.x, 1.2 + (best.seat.y || 0), best.seat.z).project(camera);
+      sitBtn.hidden = false;
+      if (_pt.z > 1) {
+        sitBtn.style.left = '50%';
+        sitBtn.style.top = (h - 88) + 'px';
+        sitBtn.style.transform = 'translate(-50%, 0)';
+      } else {
+        sitBtn.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+        sitBtn.style.top = ((1 - _pt.y) / 2 * h) + 'px';
+        sitBtn.style.transform = 'translate(-50%, -130%)';
+      }
+    }
+  } else if (sitNear || !sitBtn.hidden) {
+    sitNear = null;
+    sitBtn.hidden = true;
+  }
   if (myIsland > 0) {
     const island = islandOf(myIsland);
     if (!island) return;
@@ -2554,14 +2592,23 @@ function enterFpv(sx, sz, syaw) {
   $('vwalk').setAttribute('aria-pressed', 'true');
   buttons.forEach(b => { if (b.id !== 'vwalk') b.setAttribute('aria-pressed', 'false'); });
   setFollow(-1);
-  $('hint').textContent = 'WASD di chuyển · chuột nhìn · click người gần để mời nói chuyện, xa để vỗ vai · Esc thả chuột, Home để về view';
+  $('hint').textContent = 'WASD di chuyển · chuột nhìn · gần ghế bấm Ngồi xuống hoặc phím E · click người để vỗ vai · Esc thả chuột';
+  setWalkView(true);
   setCamera(persp); controls.enabled = false; labelsEl.hidden = true; setTween(null);
   canvas.requestPointerLock();
   announceWalk();
 }
+function sitFromWalk() {
+  if (!fpv || !sitNear) return;
+  const target = sitNear;
+  exitFpv();
+  joinDesk(target.island, target.slot);
+}
 function exitFpv() {
   if (!fpv) return;
   fpv = false; fpvKeys.clear();
+  sitNear = null; sitBtn.hidden = true;
+  setWalkView(false);
   $('crosshair').hidden = true;
   $('vwalk').setAttribute('aria-pressed', 'false');
   tapTarget = null;
@@ -2770,6 +2817,7 @@ document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const tag = e.target && e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.code === 'KeyE' && fpv && sitNear) { e.preventDefault(); sitFromWalk(); return; }
   if (e.code === 'KeyT' && !$('tapNotice').hidden) { e.preventDefault(); goToTapper(); return; }
   if (e.code === 'KeyY' || e.code === 'Enter') {
     if (!$('tapAsk').hidden) { e.preventDefault(); $('tapYes').click(); }

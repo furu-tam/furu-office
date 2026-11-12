@@ -559,6 +559,7 @@ function tagIsland(island, i) {
   sit.className = 'sit';
   sit.innerHTML = '<b>' + island.label + '</b>' + island.seats.length + ' chỗ';
   sit.title = island.zone;
+  if (/^Zone \d+$/.test(island.label)) sit.hidden = true;
   sit.addEventListener('click', (e) => { e.stopPropagation(); hooks.joinDesk(i, -1); });
   el.appendChild(sit);
   deskTagsEl.appendChild(el);
@@ -1483,10 +1484,21 @@ export function go(id) {
 buttons.forEach(b => { if (b.id !== 'btnFish' && b.id !== 'vwalk' && b.id !== 'vhome') b.addEventListener('click', () => go(b.id)); });
 controls.addEventListener('start', () => { tween = null; });
 
+let walkView = false;
+function applyLens() {
+  const a = innerWidth / innerHeight;
+  const base = a < 0.8 ? 62 : 45;
+  persp.fov = walkView ? Math.min(78, base + 10) : base;
+  persp.updateProjectionMatrix();
+}
+export function setWalkView(on) {
+  walkView = !!on;
+  applyLens();
+}
 function resize() {
   const w = innerWidth, h = innerHeight, a = w / h;
   renderer.setSize(w, h, false);
-  persp.aspect = a; persp.fov = a < 0.8 ? 62 : 45; persp.updateProjectionMatrix();
+  persp.aspect = a; applyLens();
   const halfH = Math.max(11.5, 14.5 / a) * 1.22;
   Object.assign(ortho, { left: -halfH * a, right: halfH * a, top: halfH, bottom: -halfH }); ortho.updateProjectionMatrix();
 }

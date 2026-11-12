@@ -332,6 +332,13 @@
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); white-space: nowrap;
 }
 #tapTag[hidden] { display: none !important; }
+#sitPrompt {
+  position: fixed; z-index: 6; transform: translate(-50%, -130%);
+  font: 700 13px var(--f-body, system-ui, sans-serif); color: #062028; background: var(--accent, #3fd0c0);
+  border: 0; border-radius: 999px; padding: 7px 14px; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); white-space: nowrap;
+}
+#sitPrompt[hidden] { display: none !important; }
 #pairAsk, #tapAsk {
   position: fixed; z-index: 8; left: 50%; bottom: 96px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px;
