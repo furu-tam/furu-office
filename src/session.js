@@ -54,6 +54,13 @@ let localMeter = null;
 const remoteMeters = new Map();
 const MIC_HTML = '<span class="mic" hidden aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5.3-3A5.3 5.3 0 0 1 12 16.2 5.3 5.3 0 0 1 6.7 11H5a7 7 0 0 0 6 6.7V21h2v-3.3A7 7 0 0 0 19 11h-1.7z"/></svg><i></i><i></i><i></i></span>';
 let peers = {};
+// log sự kiện kết nối cho debug panel (?debug=1 hoặc phím `)
+const dbgLog = [];
+function dbgEv(msg) {
+  dbgLog.push((performance.now() / 1000).toFixed(1) + ' ' + msg);
+  if (dbgLog.length > 60) dbgLog.shift();
+}
+const pidShort = (pid) => String(pid || '').slice(-6);
 let myPeer = null;
 let broadcastOn = false;   // đang nói cho cả đảo
 let dnd = false;           // không làm phiền: khóa mic/cam, im lặng, từ chối mọi lời mời
@@ -693,6 +700,7 @@ function enterDesk(index, slot) {
   setFollow(-1);
   setMyIsland(index + 1);
   mySlot = slot;
+  dbgEv('sit đảo' + (index + 1) + ' chỗ' + slot);
   const island = islands[index];
   const quiet = !!island.quiet;
   document.body.classList.toggle('in-room', !quiet);
@@ -737,6 +745,7 @@ function enterDesk(index, slot) {
 }
 function leaveDesk(silent) {
   if (myIsland === 0) return;
+  dbgEv('leave đảo' + myIsland);
   stopShare();
   if (pairPeer) exitPair();
   if (pairOut) { clearTimeout(pairOut.timer); pairOut = null; }
@@ -793,8 +802,11 @@ function leaveDesk(silent) {
   if (!silent) toast('Bạn đã rời bàn.');
 }
 
+let iceAt = 0;
 function iceServers() {
-  if (iceReady) return iceReady;
+  // TURN creds có hạn — tab mở lâu >12h mà dùng lại creds cũ thì call mới fail ICE
+  if (iceReady && Date.now() - iceAt < 12 * 3600e3) return iceReady;
+  iceAt = Date.now();
   iceReady = (async () => {
     const extra = [];
     if (TURN_API_KEY && TURN_APP) {
@@ -1433,6 +1445,7 @@ function openPeerAttempt(gen, n, ice, tries) {
       }
     };
     const to = setTimeout(() => fail('Mạng chậm — bấm Bật tiếng để thử lại', true), 8000);
+    dbgEv('peer try' + (tries + 1) + ' ' + id);
     p.on('open', () => {
       if (settled) return;
       settled = true;
@@ -1440,6 +1453,7 @@ function openPeerAttempt(gen, n, ice, tries) {
       peerOpening = null;
       if (gen !== claimGen || myIsland !== n) { try { p.destroy(); } catch (e) {} resolve(); return; }
       myPeer = p;
+      dbgEv('peer open ' + id);
       wireMyPeer();
       announceSeat();
       dialKnown();
@@ -1452,6 +1466,7 @@ function openPeerAttempt(gen, n, ice, tries) {
       if (settled && myPeer !== p) return;   // peer thua cuộc, đã có peer khác sống
       if (myPeer === p) { handlePeerError(err); return; }
       console.warn('[peer] open lỗi:', err && err.type, 'lần', tries + 1);
+      dbgEv('peer err ' + (err && err.type) + ' try' + (tries + 1));
       fail('Chưa nối được cuộc gọi — bạn vẫn ngồi ở bàn. Bấm Bật tiếng để thử lại.', !(err && PEER_FATAL[err.type]));
     });
   });
@@ -1508,23 +1523,34 @@ function dialKnown() {
     dial(row.peerId, 0);
   });
 }
+// call còn sống? call.open chỉ nói signaling xong — ICE failed/closed cũng phải
+// coi như chết, kẻo guard `entry.call` chặn re-dial mãi mãi sau khi rời/vào lại bàn.
+function callLive(call) {
+  if (!call || !call.open) return false;
+  const pc = call.peerConnection;
+  if (!pc) return true;
+  const s = pc.connectionState || pc.iceConnectionState || '';
+  return s !== 'failed' && s !== 'closed';
+}
 function dial(pid, tries) {
   if (!myPeer || !pid || pid === myPeer.id || myIsland === 0) return;
   const row = seatByPeer(pid);
   const entry = getEntry(pid);
   if (row) { entry.name = row.name || entry.name; entry.slot = row.slot || entry.slot; }
+  if (entry.conn && !entry.conn.open) entry.conn = null;
+  if (entry.call && !callLive(entry.call)) { entry.call = null; entry.remoteStream = null; }
   const pendingFresh = entry.pending && performance.now() - entry.pendingAt < 5000;
   if (!entry.conn && !pendingFresh) {
     if (entry.pending) { try { entry.pending.close(); } catch (e) {} entry.pending = null; }
     try {
       const conn = myPeer.connect(pid, { reliable: true });
-      if (conn) { entry.pending = conn; entry.pendingAt = performance.now(); wireConn(pid, conn); }
+      if (conn) { entry.pending = conn; entry.pendingAt = performance.now(); wireConn(pid, conn); dbgEv('conn> ' + pidShort(pid)); }
     } catch (e) {}
   }
   if (localStream && !entry.call) {
     try {
       const call = myPeer.call(pid, localStream);
-      if (call) attachCall(pid, call, tries || 0);
+      if (call) { attachCall(pid, call, tries || 0); dbgEv('call> ' + pidShort(pid)); }
     } catch (e) {}
   }
 }
@@ -1536,14 +1562,19 @@ function watchDials() {
     people.forEach((row) => {
       if (row.table !== myIsland || row.id === myId || !row.peerId) return;
       const entry = peers[row.peerId];
-      if (entry && entry.conn && entry.conn.open && (!localStream || entry.call)) return;
+      if (entry && entry.conn && entry.conn.open && (!localStream || callLive(entry.call))) return;
       dial(row.peerId, 0);
     });
   }, 2500);
 }
+function killCall(pid, call) {
+  const cur = peers[pid];
+  if (cur && cur.call === call) { cur.call = null; cur.remoteStream = null; refreshScreens(); }
+}
 function attachCall(pid, call, tries) {
   const entry = getEntry(pid);
   entry.call = call;
+  const redial = () => { if (myIsland > 0) setTimeout(() => { if (myIsland > 0) dial(pid, (tries || 0) + 1); }, 1000); };
   call.on('stream', (rs) => {
     const cur = peers[pid];
     if (!cur) return;
@@ -1553,16 +1584,23 @@ function attachCall(pid, call, tries) {
     }
     cur.call = call;
     cur.remoteStream = rs;
+    dbgEv('stream< ' + pidShort(pid));
     refreshScreens();
   });
-  call.on('close', () => {
-    const cur = peers[pid];
-    if (cur && cur.call === call) { cur.call = null; cur.remoteStream = null; refreshScreens(); }
+  call.on('close', () => { killCall(pid, call); dbgEv('call- ' + pidShort(pid)); });
+  call.on('iceStateChanged', (st) => {
+    dbgEv('ice ' + pidShort(pid) + '=' + st);
+    if (st === 'failed' || st === 'closed') { killCall(pid, call); redial(); }
+    else if (st === 'disconnected') setTimeout(() => {
+      const pc = call.peerConnection;
+      const s = pc && (pc.connectionState || pc.iceConnectionState);
+      if ((s === 'disconnected' || s === 'failed') && peers[pid] && peers[pid].call === call) { killCall(pid, call); if (myIsland > 0) dial(pid, (tries || 0) + 1); }
+    }, 4000);
   });
   call.on('error', (err) => {
     const type = err && err.type;
-    const cur = peers[pid];
-    if (cur && cur.call === call) cur.call = null;
+    dbgEv('call err ' + pidShort(pid) + ' ' + type);
+    killCall(pid, call);
     if ((type === 'peer-unavailable' || type === 'network' || type === 'server-error' || type === 'socket-error') && myIsland > 0) {
       setTimeout(() => { if (myIsland > 0) dial(pid, (tries || 0) + 1); }, 1200);
     }
@@ -1574,6 +1612,7 @@ function wireConn(pid, conn) {
     if (entry.conn && entry.conn !== conn && entry.conn.open) { try { conn.close(); } catch (e) {} return; }
     entry.conn = conn;
     entry.pending = null;
+    dbgEv('conn+ ' + pidShort(pid));
     sendTo(entry, { kind: 'hello', name: myName(), mic: micOn, cam: camOn, bc: broadcastOn, dnd });
     if (localStream && !entry.call) dial(pid, 0);
     refreshScreens();
@@ -1950,6 +1989,7 @@ function becomeHost(gen, p, index) {
   floorHub = index;
   lastBeat = performance.now();
   noteFloor(true);
+  dbgEv('floor host hub' + index);
   p.on('connection', (conn) => {
     floorConns.push(conn);
     conn.on('open', () => {
@@ -1989,6 +2029,7 @@ function becomeClient(gen, p, conn, index) {
   floorHub = index;
   lastBeat = performance.now();
   noteFloor(true);
+  dbgEv('floor join hub' + index);
   const msg = (pendingPresence && pendingPresence.kind !== 'move')
     ? pendingPresence
     : (myPresence ? { kind: 'here', who: myPresence } : pendingPresence);
@@ -2964,6 +3005,22 @@ hooks.mySlot = () => mySlot;
 hooks.isHost = () => floorHost;
 hooks.sendFloor = (msg) => { if (floorLink && floorLink.open) { try { floorLink.send(msg); } catch (e) {} } };
 hooks.posOf = (r) => posOf(r);
+hooks.debug = () => ({
+  myId, island: myIsland, slot: mySlot, dnd, fpv, micOn, camOn, bc: broadcastOn,
+  peer: myPeer ? { id: myPeer.id, open: myPeer.open, destroyed: myPeer.destroyed, disconn: myPeer.disconnected } : null,
+  opening: !!peerOpening,
+  stream: localStream ? localStream.getTracks().map((t) => t.kind + ':' + (t.enabled ? 'on' : 'off') + '/' + t.readyState) : null,
+  peers: Object.values(peers).map((e) => ({
+    pid: e.peerId, name: e.name,
+    conn: e.conn ? (e.conn.open ? 'open' : 'dead') : (e.pending ? 'pending' : '-'),
+    call: e.call ? { open: !!e.call.open, ice: e.call.peerConnection ? (e.call.peerConnection.connectionState || e.call.peerConnection.iceConnectionState) : '-' } : null,
+    rx: e.remoteStream ? e.remoteStream.getTracks().map((t) => t.kind[0] + ':' + t.readyState).join('+') : '-',
+    gain: +hearingGain(e.peerId).toFixed(2),
+  })),
+  floor: { host: floorHost, link: floorLink ? floorLink.open : null, conns: floorConns.length, people: people.size },
+  walk: { peer: walkPeer ? walkPeer.id : null, convo: convoSet.size, conns: wconns.size, streams: walkStreams.size, calls: walkCalls.size },
+  log: dbgLog.slice(-24),
+});
 hooks.upsertSeat = upsertSeat;
 hooks.removeSeat = removeSeat;
 hooks.people = () => people;
