@@ -1452,9 +1452,20 @@ function renderBell() {
     const canGo = !!(row && posOf(row));
     d.innerHTML = '<span class="ts">' + fmtTime(n.t) + '</span><span class="tx"><b>' + esc(n.name) + '</b> ' + esc(NOTIF_TEXT[n.kind] || n.kind) + '</span>';
     const btn = document.createElement('button');
-    btn.textContent = canGo ? 'Đi tới' : 'đã rời';
-    btn.disabled = !canGo;
-    if (canGo) btn.addEventListener('click', () => { $('bellPanel').hidden = true; goToRow(row); });
+    if (n.used) {
+      d.classList.add('used');
+      btn.textContent = 'đã đi';
+      btn.disabled = true;
+    } else {
+      btn.textContent = canGo ? 'Đi tới' : 'đã rời';
+      btn.disabled = !canGo;
+      if (canGo) btn.addEventListener('click', () => {
+        n.used = true;
+        saveNotif();
+        $('bellPanel').hidden = true;
+        goToRow(row);
+      });
+    }
     d.appendChild(btn);
     list.appendChild(d);
   });
