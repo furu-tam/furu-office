@@ -2181,7 +2181,8 @@ canvas.addEventListener('pointerup', (e) => {
   }
   if (myIsland !== 0 || inSecurity) return;
   const hit = raycaster.intersectObjects(pickers, false)[0];
-  if (hit && hit.object.userData.fish) { enterFish(); return; }
+  // Ngắm cá đã ẩn trên thanh công cụ.
+  // if (hit && hit.object.userData.fish) { enterFish(); return; }
   if (hit && hit.object.userData.security) { enterSecurity(); return; }
   if (hit) joinDesk(hit.object.userData.island, hit.object.userData.slot);
 });
@@ -2395,7 +2396,7 @@ $('btnInvite').addEventListener('click', () => {
   const slug = inviteSlug(island);
   if (slug) copyInvite(slug, island.label);
 });
-if (fishBtn) fishBtn.addEventListener('click', enterFish);
+// $('btnFish').addEventListener('click', enterFish);
 let menuOpen = true;
 let preferChat = innerWidth > 980;
 try { menuOpen = localStorage.getItem('furu-office-menu') !== '0'; } catch (e) {}

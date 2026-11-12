@@ -984,7 +984,7 @@ fishBtn.type = 'button';
 fishBtn.className = 'dtag';
 fishBtn.innerHTML = '<b>Hồ cá</b>ngắm cá';
 fishBtn.title = 'Ngắm hồ thủy sinh';
-fishBtn.addEventListener('click', (e) => { e.stopPropagation(); hooks.enterFish(); });
+// fishBtn.addEventListener('click', (e) => { e.stopPropagation(); hooks.enterFish(); });
 deskTagsEl.appendChild(fishBtn);
 fishTag = { el: fishBtn, v: new THREE.Vector3(-1.45, 1.92, 6.9) };
 
@@ -1463,9 +1463,9 @@ export const tags = ZONES.map(([n, s, p, cls]) => {
 // ---------- views ----------
 const VIEWS = {
   v3d: { p: [-17, 14, -24], t: [0, 0, 0] },
-  vsea: { p: [0.7, 1.22, -5.75], t: [0.7, 0.75, -11.5] },
-  vcafe: { p: [-5.0, 2.3, -0.4], t: [-10.6, 0.9, -5.4] },
-  vlounge: { p: [4.6, 2.4, 0.6], t: [9.8, 0.6, -5.6] },
+  // vsea: { p: [0.7, 1.22, -5.75], t: [0.7, 0.75, -11.5] },
+  // vcafe: { p: [-5.0, 2.3, -0.4], t: [-10.6, 0.9, -5.4] },
+  // vlounge: { p: [4.6, 2.4, 0.6], t: [9.8, 0.6, -5.6] },
 };
 export let tween = null;
 export let follow = -1;
@@ -1473,34 +1473,35 @@ export let myIsland = 0;
 export let hoveredIsland = -1;
 export const buttons = [...document.querySelectorAll('#dockView button')];
 export function go(id) {
-  if (id !== 'vagent' && !VIEWS[id]) return;
+  if (id === 'vagent' || id === 'vplan' || !VIEWS[id]) return;
   hooks.endFishWatch();
   if (id !== 'vagent') follow = -1;
   buttons.forEach(b => b.setAttribute('aria-pressed', String(b.id === id)));
-  if (id === 'vagent') {
-    if (inSecurity) hooks.leaveSecurity();
-    if (myIsland !== 0) {
-      hooks.toast('Rời bàn trước khi theo agent.');
-      buttons.forEach(b => b.setAttribute('aria-pressed', 'false'));
-      return;
-    }
-    follow = (follow + 1) % AGENTS.length;
-    camera = persp; controls.enabled = false; labelsEl.hidden = true; tween = null;
-    document.getElementById('hint').textContent = 'Đang theo Agent ' + AGENTS[follow].d.name + ' · bấm lại để đổi agent';
-    return;
-  }
-  if (id === 'vplan') {
-    camera = ortho; controls.enabled = false; labelsEl.hidden = false; tween = null;
-    document.getElementById('hint').textContent = 'Mặt bằng nhìn từ trên · bấm một đảo để ngồi';
-    return;
-  }
+  // Theo agent và Mặt bằng đã ẩn trên thanh công cụ.
+  // if (id === 'vagent') {
+  //   if (inSecurity) hooks.leaveSecurity();
+  //   if (myIsland !== 0) {
+  //     hooks.toast('Rời bàn trước khi theo agent.');
+  //     buttons.forEach(b => b.setAttribute('aria-pressed', 'false'));
+  //     return;
+  //   }
+  //   follow = (follow + 1) % AGENTS.length;
+  //   camera = persp; controls.enabled = false; labelsEl.hidden = true; tween = null;
+  //   document.getElementById('hint').textContent = 'Đang theo Agent ' + AGENTS[follow].d.name + ' · bấm lại để đổi agent';
+  //   return;
+  // }
+  // if (id === 'vplan') {
+  //   camera = ortho; controls.enabled = false; labelsEl.hidden = false; tween = null;
+  //   document.getElementById('hint').textContent = 'Mặt bằng nhìn từ trên · bấm một đảo để ngồi';
+  //   return;
+  // }
   camera = persp; controls.enabled = myIsland === 0; labelsEl.hidden = true;
   if (myIsland === 0) document.getElementById('hint').textContent = 'Bấm một bàn để ngồi · kéo để xoay';
   const v = VIEWS[id], p1 = new THREE.Vector3(...v.p), t1 = new THREE.Vector3(...v.t);
   if (REDUCED) { persp.position.copy(p1); controls.target.copy(t1); tween = null; return; }
   tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1, t1, s: 0 };
 }
-buttons.forEach(b => { if (b.id !== 'btnFish' && b.id !== 'vwalk' && b.id !== 'vhome' && b.id !== 'btnCallAgent') b.addEventListener('click', () => go(b.id)); });
+// buttons.forEach(b => { if (b.id !== 'btnFish' && b.id !== 'vwalk' && b.id !== 'vhome' && b.id !== 'btnCallAgent') b.addEventListener('click', () => go(b.id)); });
 controls.addEventListener('start', () => { tween = null; });
 
 let walkView = false;
