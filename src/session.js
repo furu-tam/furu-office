@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { BODY_ACC, EXCL, ROWS, clampLook, createPreview, disposeAvatar, freshLook, lookSig, normalizeLook, randomLook } from './avatar.js';
+import { BODY_ACC, EXCL, ROWS, buildWalker, clampLook, createPreview, disposeAvatar, freshLook, lookSig, normalizeLook, randomLook } from './avatar.js';
+
 import {
   hooks, setCamera, setTween, setFollow, setMyIsland, setHoveredIsland, setWatchingFish, setInSecurity, setFishPose, setSecurityPose, setSecurityBlocked,
   AGENTS, AQ, G, REDUCED, SECURITY_URL, T, boat, box, burndownTex, buttons, camera, cancelMyCoffee, canvas, controls, desk, deskTagsEl, facesEl, fishBtn, fishPose, fishTag, follow, go, gulls, hoveredIsland, inSecurity, islands, labelsEl, meetingTvMat, meetingTvMesh, myIsland, onCoffeeOrder, orderCoffee, ortho, persp, pickers, rackMats, renderer, scene, seaMat, seated, securityBlocked, securityPose, securityTag, tags, tween, updateAgents, updateServer, watchingFish
@@ -14,6 +15,19 @@ ring.rotation.x = -Math.PI / 2;
 ring.position.y = 0.03;
 ring.visible = false;
 scene.add(ring);
+
+const HEAR_FULL = 1.8;   // nghe full trong bán kính này (m)
+const HEAR_RANGE = 2.6;  // hết nghe ngoài bán kính này (m)
+const PAIR_DUCK = 0.15;  // mức nền khi đang nói riêng / trong convo
+const TAP_RANGE = 3.4;   // tầm vỗ vai mời nói chuyện khi đi dạo (m)
+const hearRing = new THREE.Mesh(
+  new THREE.RingGeometry(HEAR_RANGE - 0.05, HEAR_RANGE, 64),
+  new THREE.MeshBasicMaterial({ color: 0x3fd0c0, side: THREE.DoubleSide, transparent: true, opacity: 0.4, depthWrite: false })
+);
+hearRing.rotation.x = -Math.PI / 2;
+hearRing.position.y = 0.035;
+hearRing.visible = false;
+scene.add(hearRing);
 
 const $ = (id) => document.getElementById(id);
 const _pt = new THREE.Vector3();
@@ -41,6 +55,32 @@ const remoteMeters = new Map();
 const MIC_HTML = '<span class="mic" hidden aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5.3-3A5.3 5.3 0 0 1 12 16.2 5.3 5.3 0 0 1 6.7 11H5a7 7 0 0 0 6 6.7V21h2v-3.3A7 7 0 0 0 19 11h-1.7z"/></svg><i></i><i></i><i></i></span>';
 let peers = {};
 let myPeer = null;
+let broadcastOn = false;   // đang nói cho cả đảo
+let dnd = false;           // không làm phiền: khóa mic/cam, im lặng, từ chối mọi lời mời
+let pairPeer = null;       // peerId đang nói riêng 1:1
+let pairOut = null;        // {pid, timer} invite mình gửi, chờ nhận
+let pairIn = null;         // {pid, timer} invite tới đang chờ mình nhận
+let pairMutedCalls = [];   // các call đã tắt sender khi đang nói riêng
+// --- đi dạo FPV + vỗ vai mời + convo + nhạc cà phê ---
+let fpv = false;
+let fpvYaw = 0, fpvPitch = 0;
+const fpvKeys = new Set();
+const fpvPos = new THREE.Vector3(0, 0, 3);
+let fpvSentAt = 0;
+let walkPeer = null;          // Peer thứ 2: 'furuoff-w-{id}' — kênh mời/convo
+const wconns = new Map();     // walkId -> DataConnection
+const walkCalls = new Map();  // walkId -> MediaConnection
+const walkStreams = new Map();// walkId -> MediaStream (remote)
+const pendingWalk = new Set();// walkId được duyệt nhận call
+const convoSet = new Set();   // walkId các member trong cuộc trò chuyện
+let convoFar = 0;             // giây mọi member đều xa
+let tapTarget = null;         // row đang trong tầm vỗ vai mời
+let tapIn = null;             // {walkId, name, timer} invite đang chờ trả lời
+let tapFrom = null;           // id người vừa vỗ vai mình từ xa (nút Đi tới)
+const CAFE_ZONE = { x0: -13.6, x1: -4.6, z0: -8.2, z1: -1.2 }; // quầy + bàn cà phê + bar biển
+const ytVid = new URLSearchParams(location.search).get('yt') || '9kzE8isXlQY';
+let ytPlayer = null, ytReady = false, ytArmed = false;
+const colliders = [];         // {x0,z0,x1,z1} — AABB nội thất/tường, resolve theo trục
 let claimGen = 0;
 let peerOpening = null;
 let peerLibLoading = null;
@@ -160,6 +200,16 @@ function deliverTap(msg) {
   if (seenTap.has(key)) return;
   seenTap.add(key);
   const name = String(msg.name || 'Đồng nghiệp').slice(0, 24);
+  if (dnd) {
+    const reply = { kind: 'tap-dnd', to: msg.from, from: myId, name: myName() };
+    if (floorHost) broadcastFloor(reply);
+    else if (floorLink && floorLink.open) { try { floorLink.send(reply); } catch (e) {} }
+    const sender0 = people.get(msg.from);
+    const desk0 = sender0 && sender0.peerId && peers[sender0.peerId];
+    if (desk0 && desk0.conn && desk0.conn.open) sendTo(desk0, reply);
+    return;
+  }
+  tapFrom = msg.from;
   const sender = people.get(msg.from);
   if (sender) sender.bump = performance.now();
   const box = $('tapNotice');
@@ -229,11 +279,13 @@ function setProp(table, slot, visible) {
   const seat = seatOf(table, slot);
   if (seat && seat.prop) seat.prop.visible = visible;
 }
-function dropBody(g) { disposeAvatar(g); }
+function dropBody(g) {
+  disposeAvatar(g);
+}
 function upsertSeat(info) {
-  if (!info || !info.id || !info.table || !info.slot) return;
-  const seat = seatOf(info.table, info.slot);
-  if (!seat) return;
+  if (!info || !info.id || (!info.walk && (!info.table || !info.slot))) return;
+  const seat = info.walk ? null : seatOf(info.table, info.slot);
+  if (!seat && !info.walk) return;
   let row = people.get(info.id);
   if (!row) {
     const el = document.createElement('div');
@@ -248,30 +300,59 @@ function upsertSeat(info) {
   row.table = info.table | 0;
   row.slot = info.slot | 0;
   if (info.peerId) row.peerId = String(info.peerId);
+  if (info.walkId) row.walkId = String(info.walkId);
   const mine = info.id === myId;
   row.el.classList.toggle('me', mine);
   ensureMicTag(row.el);
   row.el.querySelector('.nm').textContent = row.name + (mine ? ' · bạn' : '');
   if (prev) setProp(prev.table, prev.slot, true);
-  setProp(row.table, row.slot, false);
-  const sitY = seat.y || 0;
   const look = clampLook(info.look);
   const sig = lookSig(look);
   row.look = look;
-  if (!row.body || (sig && sig !== row.lookSig)) {
+  if (info.walk) {
+    row.walk = 1; row.slot = 0; row.table = 0;
+    row.wx = info.x || 0; row.wz = info.z || 0; row.wyaw = info.yaw || 0;
+    row.px = row.wx; row.pz = row.wz;
+    if (!row.body || row.bodyKind !== 'walk' || (sig && sig !== row.lookSig)) {
+      if (row.body) dropBody(row.body);
+      const av = buildWalker(look || undefined);
+      row.body = av.root;
+      row.bodyKind = 'walk'; row.lookSig = sig;
+      row.avatar = av;
+      G.people.add(row.body);
+      row.body.position.set(row.wx, 0, row.wz);
+      row.body.rotation.y = row.wyaw;
+      row.body.userData.avatar = av;
+    }
+    row.body.userData.personId = info.id;
+    row.body.visible = !mine;
+    ensureTapButton(row.el, info.id);
+    return;
+  }
+  setProp(row.table, row.slot, false);
+  const sitY = seat.y || 0;
+  if (!row.body || row.bodyKind !== 'seat' || (sig && sig !== row.lookSig)) {
     if (row.body) dropBody(row.body);
     row.body = seated(G.people, seat.x, seat.z, seat.yaw, sitY, look || undefined);
+    row.bodyKind = 'seat';
     row.lookSig = sig;
   } else {
     row.body.position.set(seat.x, sitY, seat.z);
     row.body.rotation.y = seat.yaw;
   }
+  row.walk = 0;
   row.body.userData.personId = info.id;
   ensureTapButton(row.el, info.id);
 }
 function removeSeat(id) {
   const row = people.get(id);
   if (!row) return;
+  if (row.walkId) {
+    const wc = walkCalls.get(row.walkId); try { if (wc) wc.close(); } catch (e) {}
+    const wn = wconns.get(row.walkId); try { if (wn) wn.close(); } catch (e) {}
+    wconns.delete(row.walkId);
+    dropWalkPeer(row.walkId);
+  }
   if (row.peerId && peers[row.peerId]) removePeer(row.peerId, false);
   setProp(row.table, row.slot, true);
   if (row.body) dropBody(row.body);
@@ -281,7 +362,9 @@ function removeSeat(id) {
   people.delete(id);
 }
 function rosterList() {
-  return [...people.values()].map((r) => ({ id: r.id, name: r.name, table: r.table, slot: r.slot, peerId: r.peerId || '', look: r.look }));
+  return [...people.values()].map((r) => r.walk
+    ? { id: r.id, name: r.name, walk: 1, x: r.wx, z: r.wz, yaw: r.wyaw, walkId: r.walkId || '', peerId: r.peerId || '', look: r.look }
+    : { id: r.id, name: r.name, table: r.table, slot: r.slot, peerId: r.peerId || '', walkId: r.walkId || '', look: r.look });
 }
 function announceSeat() {
   if (myIsland === 0) {
@@ -290,10 +373,24 @@ function announceSeat() {
     sendPresence({ kind: 'gone', id: myId });
     return;
   }
-  const who = { id: myId, name: myName(), table: myIsland, slot: mySlot, peerId: myCallId(), look: myLook };
+  const who = { id: myId, name: myName(), table: myIsland, slot: mySlot, peerId: myCallId(), walkId: myWalkId(), look: myLook };
   myPresence = who;
   upsertSeat(who);
   sendPresence({ kind: 'here', who });
+}
+function myWalkId() { return 'furuoff-w-' + myId; }
+function announceWalk() {
+  // camera nhìn trục -Z nên yaw model = fpvYaw + π — gửi luôn yaw model để
+  // remote vẽ body.rotation.y đúng chiều mặt (và "đi tới" dùng đúng hướng lưng)
+  const who = { id: myId, name: myName(), walk: 1, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw + Math.PI, walkId: myWalkId(), look: myLook };
+  myPresence = who;
+  upsertSeat(who);
+  sendPresence({ kind: 'here', who });
+}
+function applyPos(m) {
+  const row = people.get(m.id);
+  if (!row || !row.walk) return;
+  row.wx = m.x; row.wz = m.z; row.wyaw = m.yaw;
 }
 export function placeOffice() {
   const w = innerWidth, h = innerHeight;
@@ -321,6 +418,30 @@ export function placeOffice() {
     });
   }
   people.forEach((row) => {
+    if (row.walk) {
+      if (row.body) {
+        const k = 0.18;
+        const px = row.body.position.x + (row.wx - row.body.position.x) * k;
+        const pz = row.body.position.z + (row.wz - row.body.position.z) * k;
+        const moving = Math.hypot(row.wx - row.body.position.x, row.wz - row.body.position.z) > 0.01;
+        row.body.position.set(px, 0, pz);
+        let dy = row.wyaw - row.body.rotation.y;
+        while (dy > Math.PI) dy -= Math.PI * 2;
+        while (dy < -Math.PI) dy += Math.PI * 2;
+        row.body.rotation.y += dy * 0.2;
+        if (row.avatar) row.avatar.walkAmt = moving && !REDUCED ? 0.9 : 0;
+      }
+      _pt.set(row.wx, 1.95, row.wz).project(camera);
+      row.el.hidden = _pt.z > 1;
+      row.el.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+      row.el.style.top = ((1 - _pt.y) / 2 * h) + 'px';
+      if (row.body && row.bump) {
+        const age = performance.now() - row.bump;
+        row.body.rotation.z = age > 700 ? 0 : Math.sin(age / 55) * 0.22;
+        if (age > 700) row.bump = 0;
+      }
+      return;
+    }
     const seat = seatOf(row.table, row.slot);
     if (!seat) { row.el.hidden = true; return; }
     _pt.set(seat.x, 1.75 + (seat.y || 0), seat.z).project(camera);
@@ -334,6 +455,15 @@ export function placeOffice() {
       if (age > 700) row.bump = 0;
     }
   });
+  if (tapTarget) {
+    const p = posOf(tapTarget);
+    if (p) {
+      _pt.set(p.x, p.walk ? 2.05 : 1.95, p.z).project(camera);
+      tapTagEl.hidden = _pt.z > 1;
+      tapTagEl.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+      tapTagEl.style.top = ((1 - _pt.y) / 2 * h) + 'px';
+    } else tapTagEl.hidden = true;
+  } else tapTagEl.hidden = true;
   if (myIsland > 0) {
     const island = islandOf(myIsland);
     if (!island) return;
@@ -361,6 +491,15 @@ function placeBubbles(w, h) {
   bubbles.forEach((b, id) => {
     if (now > b.until) { b.el.remove(); bubbles.delete(id); return; }
     const row = people.get(id);
+    if (row && row.walk) {
+      _pt.set(row.wx, 2.1, row.wz).project(camera);
+      b.el.hidden = _pt.z > 1;
+      const head = (1 - _pt.y) / 2 * h;
+      const top = head > 72 ? head - 4 : Math.min(h - 16, head + 78);
+      b.el.style.left = ((_pt.x + 1) / 2 * w) + 'px';
+      b.el.style.top = top + 'px';
+      return;
+    }
     const seat = row && seatOf(row.table, row.slot);
     if (!seat) { b.el.hidden = true; return; }
     _pt.set(seat.x, 1.9 + (seat.y || 0), seat.z).project(camera);
@@ -542,6 +681,7 @@ function enterDesk(index, slot) {
   toast(quiet ? 'Đã ngồi chơi. Bấm Gọi cà phê nếu muốn. Mic và camera tắt.' : island.share ? 'Đã vào phòng họp.' : 'Đã ngồi. Bấm Bật tiếng khi muốn nói.', 3200);
   updateSelf();
   syncControlButtons();
+  syncPairUI();
   refreshScreens();
   ring.visible = false;
   announceSeat();
@@ -553,6 +693,12 @@ function enterDesk(index, slot) {
 function leaveDesk(silent) {
   if (myIsland === 0) return;
   stopShare();
+  if (pairPeer) exitPair();
+  if (pairOut) { clearTimeout(pairOut.timer); pairOut = null; }
+  if (pairIn) { clearTimeout(pairIn.timer); pairIn = null; hidePairAsk(); }
+  leaveConvo(true);
+  broadcastOn = false;
+  if (dnd) { dnd = false; syncControlButtons(); }
   claimGen++;
   peerOpening = null;
   broadcast({ kind: 'bye' });
@@ -644,12 +790,14 @@ function refreshScreens() {
     screen.visible = true;
     const name = (peer && peer.name) || row.name || 'Bạn';
     const micOff = peer ? peer.micOn === false : false;
+    const isDnd = peer ? !!peer.dnd : false;
     ensureMicTag(screen.userData.tag);
-    screen.userData.tag.querySelector('.nm').textContent = name + (micOff ? ' · mic tắt' : '');
+    screen.userData.tag.querySelector('.nm').textContent = name + (isDnd ? ' · DND' : micOff ? ' · mic tắt' : '');
     ensureTapButton(screen.userData.tag, row.id);
     const face = screen.userData.face;
     const stream = peer && peer.remoteStream;
-    const hasVideo = stream && peer.camOn !== false && stream.getVideoTracks().some((t) => t.readyState === 'live');
+    const hearOk = !row.peerId || hearingGain(row.peerId) > 0.001;
+    const hasVideo = hearOk && stream && peer.camOn !== false && stream.getVideoTracks().some((t) => t.readyState === 'live');
     if (stream) playRemoteAudio(stream);
     if (hasVideo) {
       const vid = screen.userData.video;
@@ -673,6 +821,51 @@ function refreshScreens() {
       face.material.needsUpdate = true;
     }
   });
+  applyGains();
+  syncHearRing();
+}
+function rowAtSeat(table, slot) {
+  for (const row of people.values()) if (row.table === table && row.slot === slot) return row;
+  return null;
+}
+function hearingGain(pid) {
+  if (dnd) return 0;
+  if (pairPeer) return pid === pairPeer ? 1 : (inMeeting() ? PAIR_DUCK : 0);
+  if (convoSet.size) {
+    const row0 = seatByPeer(pid);
+    if (row0 && row0.walkId && convoSet.has(row0.walkId)) return 0;   // member → nghe qua kênh convo
+    return PAIR_DUCK;                                                // đảo duck 15% khi đang convo
+  }
+  if (inMeeting()) return 1;
+  const entry = peers[pid];
+  if (entry && entry.bc) return 1;
+  const row = seatByPeer(pid);
+  const island = islandOf(myIsland);
+  if (!row || !island || row.table !== myIsland || !row.slot) return 1;
+  const seat = island.seats[row.slot - 1], mine = island.seats[mySlot - 1];
+  if (!seat || !mine) return 1;
+  const d = Math.hypot(seat.x - mine.x, seat.z - mine.z);
+  if (d <= HEAR_FULL) return 1;
+  if (d >= HEAR_RANGE) return 0;
+  return 1 - (d - HEAR_FULL) / (HEAR_RANGE - HEAR_FULL);
+}
+function applyGains() {
+  applyWalkGains();
+  Object.keys(peers).forEach((pid) => {
+    const entry = peers[pid];
+    if (!entry || !entry.remoteStream) return;
+    const audio = remoteAudio.get(entry.remoteStream.id);
+    if (audio) audio.volume = hearingGain(pid);
+  });
+}
+function syncHearRing() {
+  const island = islandOf(myIsland);
+  const show = !!(island && !island.quiet && !island.share && !pairPeer);
+  hearRing.visible = show;
+  if (show && mySlot) {
+    const seat = island.seats[mySlot - 1];
+    if (seat) hearRing.position.set(seat.x, 0.035, seat.z);
+  }
 }
 function updateSelf() {
   const wrap = $('selfWrap');
@@ -1011,6 +1204,7 @@ function syncControlButtons() {
   $('btnCam').textContent = camOn ? 'Camera đang bật' : 'Camera đang tắt';
   $('btnShare').classList.toggle('off', sharing);
   $('btnShare').textContent = sharing ? 'Dừng chia sẻ' : 'Chia sẻ màn hình';
+  [$('btnMic'), $('btnCam'), $('btnTalk'), $('btnShare')].forEach(b => b.classList.toggle('locked', dnd));
 }
 (function prepMicButton() {
   const btn = $('btnMic');
@@ -1140,7 +1334,6 @@ function openTablePeer() {
   if (peerOpening) return peerOpening;
   const gen = ++claimGen;
   const n = myIsland;
-  const id = myCallId();
   setConn('', 'Đang nối cuộc gọi…');
   peerOpening = loadPeerLib().then((ok) => {
     if (gen !== claimGen || myIsland !== n) { peerOpening = null; return; }
@@ -1150,49 +1343,73 @@ function openTablePeer() {
       toast('Không tải được thư viện kết nối. Kiểm tra mạng rồi bấm Bật tiếng.', 5200);
       return;
     }
-    return iceServers().then((ice) => new Promise((resolve) => {
-      if (gen !== claimGen || myIsland !== n || myPeer) { peerOpening = null; resolve(); return; }
-      let p;
-      try { p = new Peer(id, { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true }); }
-      catch (e) {
-        peerOpening = null;
-        setConn('err', 'Không mở được cuộc gọi — bấm Bật tiếng để thử lại');
-        resolve();
-        return;
-      }
-      let settled = false;
-      const fail = (msg) => {
-        if (settled || gen !== claimGen) return;
-        settled = true;
-        clearTimeout(to);
-        try { p.destroy(); } catch (e) {}
-        peerOpening = null;
-        if (myIsland === n && !myPeer) { setConn('err', msg); $('btnTalk').hidden = false; }
-        resolve();
-      };
-      const to = setTimeout(() => fail('Mạng chậm — bấm Bật tiếng để thử lại'), 8000);
-      p.on('open', () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(to);
-        peerOpening = null;
-        if (gen !== claimGen || myIsland !== n) { try { p.destroy(); } catch (e) {} resolve(); return; }
-        myPeer = p;
-        wireMyPeer();
-        announceSeat();
-        dialKnown();
-        watchDials();
-        refreshConnText();
-        refreshScreens();
-        resolve();
-      });
-      p.on('error', (err) => {
-        if (!myPeer) fail('Chưa nối được cuộc gọi — bạn vẫn ngồi ở bàn. Bấm Bật tiếng để thử lại.');
-        else handlePeerError(err);
-      });
-    }));
+    return iceServers().then((ice) => openPeerAttempt(gen, n, ice, 0));
   });
   return peerOpening;
+}
+// Lỗi vĩnh viễn, retry vô ích; còn lại (network/socket/unavailable-id) đều thử lại.
+const PEER_FATAL = { 'browser-incompatible': 1, 'invalid-id': 1, 'invalid-key': 1, 'ssl-unavailable': 1 };
+const PEER_TRIES = 3;
+function openPeerAttempt(gen, n, ice, tries) {
+  return new Promise((resolve) => {
+    if (gen !== claimGen || myIsland !== n || myPeer) { peerOpening = null; resolve(); return; }
+    // Lần retry gắn hậu tố để né id "ma": peer cũ vừa destroy nhưng broker chưa kịp
+    // giải phóng id -> new Peer cùng id bị 'unavailable-id' -> chặn hoài mỗi lần bấm Bật tiếng.
+    const id = myCallId() + (tries ? '-r' + tries : '');
+    let p;
+    try { p = new Peer(id, { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true }); }
+    catch (e) {
+      peerOpening = null;
+      setConn('err', 'Không mở được cuộc gọi — bấm Bật tiếng để thử lại');
+      resolve();
+      return;
+    }
+    let settled = false;
+    const finish = (next) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(to);
+      try { p.destroy(); } catch (e) {}
+      next();
+    };
+    const fail = (msg, canRetry) => {
+      if (gen !== claimGen) { try { p.destroy(); } catch (e) {} resolve(); return; }
+      if (canRetry && tries + 1 < PEER_TRIES && myIsland === n && !myPeer) {
+        finish(() => {
+          setConn('', 'Đang nối lại cuộc gọi… (' + (tries + 2) + '/' + PEER_TRIES + ')');
+          setTimeout(() => resolve(openPeerAttempt(gen, n, ice, tries + 1)), 1000 + tries * 1000);
+        });
+      } else {
+        finish(() => {
+          peerOpening = null;
+          if (myIsland === n && !myPeer) { setConn('err', msg); $('btnTalk').hidden = false; }
+          resolve();
+        });
+      }
+    };
+    const to = setTimeout(() => fail('Mạng chậm — bấm Bật tiếng để thử lại', true), 8000);
+    p.on('open', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(to);
+      peerOpening = null;
+      if (gen !== claimGen || myIsland !== n) { try { p.destroy(); } catch (e) {} resolve(); return; }
+      myPeer = p;
+      wireMyPeer();
+      announceSeat();
+      dialKnown();
+      watchDials();
+      refreshConnText();
+      refreshScreens();
+      resolve();
+    });
+    p.on('error', (err) => {
+      if (settled && myPeer !== p) return;   // peer thua cuộc, đã có peer khác sống
+      if (myPeer === p) { handlePeerError(err); return; }
+      console.warn('[peer] open lỗi:', err && err.type, 'lần', tries + 1);
+      fail('Chưa nối được cuộc gọi — bạn vẫn ngồi ở bàn. Bấm Bật tiếng để thử lại.', !(err && PEER_FATAL[err.type]));
+    });
+  });
 }
 function wireMyPeer() {
   myPeer.on('connection', (conn) => {
@@ -1226,6 +1443,7 @@ function handlePeerError(err) {
   if (err.type === 'peer-unavailable') return;
   if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed') {
     if (myIsland > 0) setConn('err', 'Mất nối tới máy chủ bắt tay — các máy đã nối vẫn nói chuyện bình thường');
+    if (err.type === 'socket-error' || err.type === 'socket-closed') { try { myPeer && myPeer.reconnect(); } catch (e) {} }
   }
 }
 function seatByPeer(pid) {
@@ -1311,7 +1529,7 @@ function wireConn(pid, conn) {
     if (entry.conn && entry.conn !== conn && entry.conn.open) { try { conn.close(); } catch (e) {} return; }
     entry.conn = conn;
     entry.pending = null;
-    sendTo(entry, { kind: 'hello', name: myName(), mic: micOn, cam: camOn });
+    sendTo(entry, { kind: 'hello', name: myName(), mic: micOn, cam: camOn, bc: broadcastOn, dnd });
     if (localStream && !entry.call) dial(pid, 0);
     refreshScreens();
     refreshConnText();
@@ -1336,6 +1554,8 @@ function handleData(pid, m) {
     entry.name = String(m.name || 'Bạn').slice(0, 24);
     entry.micOn = m.mic !== false;
     entry.camOn = m.cam !== false;
+    entry.bc = !!m.bc;
+    entry.dnd = !!m.dnd;
     entry.greeted = true;
     if (isNew) {
       const place = (islandOf(myIsland) && islandOf(myIsland).label) || 'đảo';
@@ -1349,7 +1569,33 @@ function handleData(pid, m) {
   } else if (m.kind === 'state') {
     entry.micOn = m.mic !== false;
     entry.camOn = m.cam !== false;
+    entry.bc = !!m.bc;
+    entry.dnd = !!m.dnd;
     refreshScreens();
+    applyGains();
+  } else if (m.kind === 'pair-invite') {
+    if (dnd || pairPeer || pairIn || pairOut) {
+      sendTo(entry, { kind: 'pair-busy', reason: dnd ? 'dnd' : 'busy' });
+      return;
+    }
+    pairIn = { pid, timer: setTimeout(() => declinePair(pid, true), 15000) };
+    showPairAsk(String(m.name || entry.name || 'Ai đó').slice(0, 24));
+  } else if (m.kind === 'pair-accept') {
+    if (pairOut && pairOut.pid === pid) { clearTimeout(pairOut.timer); pairOut = null; enterPair(pid); }
+  } else if (m.kind === 'pair-decline') {
+    if (pairOut && pairOut.pid === pid) {
+      clearTimeout(pairOut.timer); pairOut = null;
+      toast(entry.name + ' từ chối nói riêng.');
+    }
+  } else if (m.kind === 'pair-busy') {
+    if (pairOut && pairOut.pid === pid) {
+      clearTimeout(pairOut.timer); pairOut = null;
+      toast(entry.name + (m.reason === 'dnd' ? ' đang bật Không làm phiền.' : ' đang nói riêng với người khác.'));
+    }
+  } else if (m.kind === 'pair-end') {
+    if (pairPeer === pid) exitPair(true);
+    if (pairIn && pairIn.pid === pid) { clearTimeout(pairIn.timer); pairIn = null; hidePairAsk(); }
+    if (pairOut && pairOut.pid === pid) { clearTimeout(pairOut.timer); pairOut = null; }
   } else if (m.kind === 'screen') {
     if (!m.on && !sharing) clearMeetingScreen();
   } else if (m.kind === 'bye') removePeer(pid, true);
@@ -1364,6 +1610,9 @@ function broadcast(obj) {
 function removePeer(slot, announce) {
   const entry = peers[slot];
   if (!entry) return;
+  if (slot === pairPeer) exitPair(true);
+  if (pairOut && pairOut.pid === slot) { clearTimeout(pairOut.timer); pairOut = null; }
+  if (pairIn && pairIn.pid === slot) { clearTimeout(pairIn.timer); pairIn = null; hidePairAsk(); }
   delete peers[slot];
   try { if (entry.conn) entry.conn.close(); } catch (e) {}
   try { if (entry.call) entry.call.close(); } catch (e) {}
@@ -1374,9 +1623,146 @@ function removePeer(slot, announce) {
   }
 }
 
+function sendState() {
+  broadcast({ kind: 'state', mic: micOn, cam: camOn, bc: broadcastOn, dnd });
+}
+// ---------- pair 1:1: privacy phía gửi bằng cách tắt sender tới non-partner ----------
+function setCallSendersActive(call, active) {
+  try {
+    const pc = call && call.peerConnection;
+    if (!pc || !pc.getSenders) return;
+    pc.getSenders().forEach((s) => {
+      try {
+        const p = s.getParameters();
+        if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+        p.encodings.forEach((e) => { e.active = active; });
+        s.setParameters(p).catch(() => {});
+      } catch (e) {}
+    });
+  } catch (e) {}
+}
+function muteNonPartnerSends() {
+  pairMutedCalls = [];
+  Object.keys(peers).forEach((id) => {
+    if (id === pairPeer) return;
+    const call = peers[id].call;
+    if (!call) return;
+    setCallSendersActive(call, false);
+    pairMutedCalls.push(call);
+  });
+}
+function pairName(pid) {
+  const entry = peers[pid];
+  const row = entry ? null : seatByPeer(pid);
+  return (entry && entry.name) || (row && row.name) || 'Đồng nghiệp';
+}
+function enterPair(pid) {
+  if (pairIn) { clearTimeout(pairIn.timer); sendTo(getEntry(pairIn.pid), { kind: 'pair-decline' }); pairIn = null; hidePairAsk(); }
+  if (pairOut) { clearTimeout(pairOut.timer); if (pairOut.pid !== pid) sendTo(getEntry(pairOut.pid), { kind: 'pair-decline' }); pairOut = null; }
+  pairPeer = pid;
+  muteNonPartnerSends();
+  const name = pairName(pid);
+  setConn('on', 'Đang nói riêng với ' + name + (inMeeting() ? ' · phòng họp nghe nhỏ' : ''));
+  toast('Đang nói riêng với ' + name + '. Esc hoặc Kết thúc để quay lại.');
+  sysMsg('Bạn đang nói riêng với ' + name + '.');
+  refreshScreens();
+  syncPairUI();
+}
+function exitPair(byPeer) {
+  if (!pairPeer) return;
+  const pid = pairPeer;
+  pairPeer = null;
+  pairMutedCalls.forEach((call) => setCallSendersActive(call, true));
+  pairMutedCalls = [];
+  if (!byPeer) { const entry = peers[pid]; if (entry) sendTo(entry, { kind: 'pair-end' }); }
+  toast(byPeer ? pairName(pid) + ' đã kết thúc nói riêng.' : 'Đã kết thúc nói riêng.');
+  refreshConnText();
+  refreshScreens();
+  syncPairUI();
+}
+function invitePair(row) {
+  if (!row || !row.peerId || row.id === myId) return;
+  if (dnd) { toast('Đang bật Không làm phiền — tắt nó trước đã.'); return; }
+  if (pairPeer) { toast('Đang nói riêng — bấm Kết thúc nói riêng trước.'); return; }
+  if (pairOut) return;
+  const entry = peers[row.peerId];
+  if (!entry || !entry.conn || !entry.conn.open) {
+    dial(row.peerId, 0);
+    toast('Chưa nối được ' + (row.name || 'người này') + ' — thử lại sau giây.');
+    return;
+  }
+  if (entry.dnd) { toast(entry.name + ' đang bật Không làm phiền.'); return; }
+  sendTo(entry, { kind: 'pair-invite', name: myName() });
+  pairOut = {
+    pid: row.peerId,
+    timer: setTimeout(() => { pairOut = null; toast((entry.name || row.name || 'Họ') + ' không nhận.'); }, 15000)
+  };
+  toast('Đang gọi riêng ' + (entry.name || row.name || 'người này') + '…');
+}
+function showPairAsk(name) {
+  $('pairAskText').textContent = name + ' mời bạn nói riêng';
+  $('pairAsk').hidden = false;
+}
+function hidePairAsk() { $('pairAsk').hidden = true; }
+function declinePair(pid, timedOut) {
+  if (pairIn && pairIn.pid === pid) { clearTimeout(pairIn.timer); pairIn = null; }
+  hidePairAsk();
+  const entry = peers[pid];
+  if (entry) sendTo(entry, { kind: 'pair-decline' });
+}
+function acceptPair() {
+  if (!pairIn) { hidePairAsk(); return; }
+  const pid = pairIn.pid;
+  clearTimeout(pairIn.timer); pairIn = null; hidePairAsk();
+  const entry = peers[pid];
+  if (!entry) { toast('Người gọi đã rời.'); return; }
+  sendTo(entry, { kind: 'pair-accept' });
+  enterPair(pid);
+}
+function syncPairUI() {
+  const island = islandOf(myIsland);
+  const talk = !!(island && !island.quiet);
+  $('btnBc').hidden = !talk || !!island.share;
+  $('btnBc').disabled = !!pairPeer;
+  $('btnPairEnd').hidden = !pairPeer;
+  $('btnDnd').hidden = !talk;
+  $('btnBc').classList.toggle('live', broadcastOn);
+  $('btnBc').setAttribute('aria-pressed', String(broadcastOn));
+  $('btnDnd').classList.toggle('live', dnd);
+  $('btnDnd').setAttribute('aria-pressed', String(dnd));
+}
+function setDnd(on) {
+  if (on === dnd) return;
+  if (on) {
+    if (pairPeer) exitPair();
+    leaveConvo(true);
+    if (pairOut) { const e = peers[pairOut.pid]; clearTimeout(pairOut.timer); if (e) sendTo(e, { kind: 'pair-end' }); pairOut = null; }
+    if (pairIn) { clearTimeout(pairIn.timer); declinePair(pairIn.pid); }
+    if (tapIn) { clearTimeout(tapIn.timer); $('tapAsk').hidden = true; tapIn = null; }
+    dnd = true;
+    micOn = false;
+    camOn = false;
+    if (localStream) {
+      localStream.getAudioTracks().forEach((t) => { t.enabled = false; });
+      localStream.getVideoTracks().forEach((t) => { t.enabled = false; });
+    }
+    toast('Đã bật Không làm phiền. Mic, camera đã khóa và bạn không nghe ai.');
+  } else {
+    dnd = false;
+    toast('Đã tắt Không làm phiền.');
+  }
+  sendState();
+  syncControlButtons();
+  syncPairUI();
+  updateSelf();
+  refreshScreens();
+  applyGains();
+}
+
 function sendPresence(msg) {
   if (floorHost) { applyPresence(msg, true); return; }
   if (floorLink && floorLink.open) floorLink.send(msg);
+  else if (msg.kind === 'move') { if (!pendingPresence || pendingPresence.kind === 'move') pendingPresence = msg; }
   else pendingPresence = msg;
 }
 function noteFloor(ok) {
@@ -1415,6 +1801,9 @@ function applyPresence(msg, relay) {
     removeSeat(msg.id);
     if (relay) broadcastFloor(msg);
     refreshScreens();
+  } else if (msg.kind === 'move' && msg.id) {
+    applyPos(msg);
+    if (relay) broadcastFloor(msg);
   } else if (msg.kind === 'roster' && Array.isArray(msg.people)) {
     const keep = new Set(msg.people.map((p) => p.id));
     [...people.keys()].forEach((id) => { if (id !== myId && !keep.has(id)) removeSeat(id); });
@@ -1428,17 +1817,33 @@ function broadcastFloor(msg) {
 }
 function onFloorData(msg, from) {
   if (!msg || typeof msg !== 'object') return;
-  if (msg.kind === 'beat' || msg.kind === 'ping') { lastBeat = performance.now(); return; }
+  if (msg.kind === 'beat' || msg.kind === 'ping') {
+    lastBeat = performance.now();
+    // client trả lời beat bằng pong để host biết còn sống — không có thì walker bị 'gone'
+    if (msg.kind === 'beat' && !floorHost && floorLink && floorLink.open) {
+      try { floorLink.send({ kind: 'pong' }); } catch (e) {}
+    }
+    return;
+  }
   if (msg.kind === 'here' && msg.who && floorHost) {
     if (from) from.whoId = msg.who.id;
     applyPresence(msg, true);
     return;
   }
   if (msg.kind === 'gone' && floorHost) { applyPresence(msg, true); return; }
+  if (msg.kind === 'move' && msg.id) { applyPresence(msg, floorHost); return; }
   if (msg.kind === 'say') { onSay(msg, floorHost, false); return; }
   if (msg.kind === 'tap') {
     if (floorHost && from) broadcastFloor(msg);
     deliverTap(msg);
+    return;
+  }
+  if (msg.kind === 'tap-dnd') {
+    if (floorHost && from) broadcastFloor(msg);
+    if (msg.to === myId && msg.from !== myId) {
+      const who = people.get(msg.from);
+      toast((msg.name || (who && who.name) || 'Người đó') + ' đang bật Không làm phiền.');
+    }
     return;
   }
   if (msg.kind === 'coffee') {
@@ -1450,7 +1855,7 @@ function onFloorData(msg, from) {
     msg.items.forEach((item) => onSay(item, false, true));
     return;
   }
-  if (!floorHost && (msg.kind === 'here' || msg.kind === 'gone' || msg.kind === 'roster')) applyPresence(msg, false);
+  if (!floorHost && (msg.kind === 'here' || msg.kind === 'gone' || msg.kind === 'roster' || msg.kind === 'move')) applyPresence(msg, false);
 }
 const HUBS = ['furu-hub-0', 'furu-hub-1', 'furu-hub-2', 'furu-hub-3', 'furu-hub-4', 'furu-hub-5', 'furu-hub-6', 'furu-hub-7'];
 let floorGen = 0;
@@ -1477,7 +1882,19 @@ function startFloorWatch(gen) {
   clearInterval(floorTimer);
   floorTimer = setInterval(() => {
     if (gen !== floorGen) return;
-    if (floorHost) { broadcastFloor({ kind: 'beat', t: Date.now() }); return; }
+    if (floorHost) {
+      broadcastFloor({ kind: 'beat', t: Date.now() });
+      const now = performance.now();
+      floorConns = floorConns.filter((c) => {
+        // chỉ dọn conn đã từng trả lời ping (client code mới) — client bản cũ không
+        // gửi ping nên không thể phân biệt "chết" với "im lặng hợp lệ"
+        if (!c._pong || now - (c._seen || 0) < 25000) return true;
+        try { c.close(); } catch (e) {}
+        if (c.whoId && c.whoId !== myId) { removeSeat(c.whoId); broadcastFloor({ kind: 'gone', id: c.whoId }); }
+        return false;
+      });
+      return;
+    }
     if (!floorLink || !floorLink.open || performance.now() - lastBeat > 8000) claimFloor();
   }, 2500);
 }
@@ -1491,12 +1908,15 @@ function becomeHost(gen, p, index) {
   p.on('connection', (conn) => {
     floorConns.push(conn);
     conn.on('open', () => {
+      conn._seen = performance.now();
       try { conn.send({ kind: 'beat', t: Date.now() }); } catch (e) {}
       try { conn.send({ kind: 'roster', people: rosterList() }); } catch (e) {}
       if (roomLog.length) { try { conn.send({ kind: 'log', items: roomLog.slice(-30) }); } catch (e) {} }
     });
     conn.on('data', (msg) => {
+      conn._seen = performance.now();
       if (msg && msg.kind === 'ping') { try { conn.send({ kind: 'beat', t: Date.now() }); } catch (e) {} return; }
+      if (msg && msg.kind === 'pong') { conn._pong = true; return; }
       onFloorData(msg, conn);
     });
     conn.on('close', () => {
@@ -1524,7 +1944,9 @@ function becomeClient(gen, p, conn, index) {
   floorHub = index;
   lastBeat = performance.now();
   noteFloor(true);
-  const msg = pendingPresence || (myPresence ? { kind: 'here', who: myPresence } : null);
+  const msg = (pendingPresence && pendingPresence.kind !== 'move')
+    ? pendingPresence
+    : (myPresence ? { kind: 'here', who: myPresence } : pendingPresence);
   pendingPresence = null;
   if (msg) { try { conn.send(msg); } catch (e) {} }
   p.on('disconnected', () => { try { p.reconnect(); } catch (e) {} });
@@ -1603,11 +2025,47 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let down = null;
 canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; unlockAudio(); });
+function fpvAct() {
+  if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
+  raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+  const hits = raycaster.intersectObjects([...G.people.children, ...pickers], true);
+  for (const hit of hits) {
+    let o = hit.object, pid = '', pk = null;
+    while (o) {
+      if (!pid && o.userData && o.userData.personId) pid = o.userData.personId;
+      if (!pk && o.userData && (o.userData.island !== undefined)) pk = o.userData;
+      o = o.parent;
+    }
+    if (pid && pid !== myId) {
+      const row = people.get(pid);
+      const p = row && posOf(row);
+      const d = p ? Math.hypot(fpvPos.x - p.x, fpvPos.z - p.z) : 99;
+      if (row && d <= TAP_RANGE) sendInvite(row);
+      else if (row) { askNotify(); tapShoulder(pid); }
+      return;
+    }
+    if (pk) {
+      const isl = pk.island, sl = pk.slot;
+      const occ = rowAtSeat(isl + 1, sl + 1);
+      if (occ) {
+        const p = posOf(occ);
+        const d = p ? Math.hypot(fpvPos.x - p.x, fpvPos.z - p.z) : 99;
+        if (d <= TAP_RANGE) sendInvite(occ);
+        else { askNotify(); tapShoulder(occ.id); }
+        return;
+      }
+      exitFpv();
+      joinDesk(isl, sl);
+      return;
+    }
+  }
+}
 canvas.addEventListener('pointerup', (e) => {
   if (!down) return;
   const dx = e.clientX - down.x, dy = e.clientY - down.y;
   down = null;
   if (dx * dx + dy * dy > 36) return;
+  if (fpv) { fpvAct(); return; }
   pointer.x = (e.clientX / innerWidth) * 2 - 1;
   pointer.y = -(e.clientY / innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
@@ -1616,6 +2074,17 @@ canvas.addEventListener('pointerup', (e) => {
     if (tvHit) { openTvFull(); return; }
   }
   if (!inSecurity && !watchingFish) {
+    if (myIsland > 0) {
+      const island = islandOf(myIsland);
+      if (island && island.screens.length) {
+        const sh = raycaster.intersectObjects(island.screens, false)[0];
+        if (sh) {
+          const slot = island.screens.indexOf(sh.object) + 1;
+          const who = rowAtSeat(myIsland, slot);
+          if (who && who.id !== myId) { invitePair(who); return; }
+        }
+      }
+    }
     const person = personUnderPointer();
     if (person) { askNotify(); tapShoulder(person); return; }
   }
@@ -1626,6 +2095,7 @@ canvas.addEventListener('pointerup', (e) => {
   if (hit) joinDesk(hit.object.userData.island, hit.object.userData.slot);
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (fpv) return;
   if (inMeeting() && meetingTvMesh && screenVideo && screenVideo.srcObject) {
     pointer.x = (e.clientX / innerWidth) * 2 - 1;
     pointer.y = -(e.clientY / innerHeight) * 2 + 1;
@@ -1662,7 +2132,7 @@ canvas.addEventListener('pointermove', (e) => {
   } else ring.visible = false;
 });
 
-$('btnTalk').addEventListener('click', startVoice);
+$('btnTalk').addEventListener('click', () => { if (dnd) { toast('Đang bật Không làm phiền.'); return; } startVoice(); });
 $('btnHear').addEventListener('click', () => {
   unlockAudio();
   let pending = 0;
@@ -1675,14 +2145,15 @@ $('btnHear').addEventListener('click', () => {
   if (!remoteAudio.size) $('btnHear').hidden = true;
 });
 $('btnMic').addEventListener('click', () => {
+  if (dnd) { toast('Đang bật Không làm phiền.'); return; }
   if (!localStream || !localStream.getAudioTracks().length) { startVoice(); return; }
   micOn = !micOn;
   localStream.getAudioTracks().forEach((t) => { t.enabled = micOn; });
   syncControlButtons();
   refreshScreens();
-  broadcast({ kind: 'state', mic: micOn, cam: camOn });
+  sendState();
 });
-$('btnShare').addEventListener('click', () => { if (sharing) stopShare(); else startShare(); });
+$('btnShare').addEventListener('click', () => { if (dnd) { toast('Đang bật Không làm phiền.'); return; } if (sharing) stopShare(); else startShare(); });
 $('btnTv').addEventListener('click', openTvFull);
 $('tvFullClose').addEventListener('click', closeTvFull);
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) $('tvFull').hidden = true; });
@@ -1690,6 +2161,8 @@ addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (watchingFish) { leaveFish(); return; }
   if (inSecurity) { leaveSecurity(); return; }
+  if (fpv && document.pointerLockElement !== canvas) { exitFpv(); return; }
+  if (pairPeer) { exitPair(); return; }
   if (follow >= 0) { go('v3d'); return; }
   if (!$('tvFull').hidden) closeTvFull();
 });
@@ -1793,12 +2266,13 @@ $('secureFrame').addEventListener('load', () => {
   if (blocked && !$('secureRoom').hidden) $('secureExit').focus();
 });
 $('btnCam').addEventListener('click', () => {
+  if (dnd) { toast('Đang bật Không làm phiền.'); return; }
   if (camOn) {
     camOn = false;
     if (localStream) localStream.getVideoTracks().forEach((t) => { t.enabled = false; });
     syncControlButtons();
     updateSelf();
-    broadcast({ kind: 'state', mic: micOn, cam: camOn });
+    sendState();
     return;
   }
   ensureVideo().then((ok) => {
@@ -1806,14 +2280,24 @@ $('btnCam').addEventListener('click', () => {
     if (!ok) toast('Chưa bật được camera. Hãy cho phép camera rồi bấm lại.', 4600);
     syncControlButtons();
     updateSelf();
-    broadcast({ kind: 'state', mic: micOn, cam: camOn });
+    sendState();
   }).catch(() => {
     camOn = false;
     toast('Trình duyệt đang chặn camera. Mở quyền camera cho trang này.', 4800);
     syncControlButtons();
   });
 });
-$('btnLeave').addEventListener('click', () => leaveDesk(false));
+$('btnLeave').addEventListener('click', () => {
+  const seat = myIsland ? seatOf(myIsland, mySlot) : null;
+  const island = islandOf(myIsland);
+  if (!seat) { leaveDesk(false); return; }
+  const sx = seat.x - Math.sin(seat.yaw) * 1.4, sz = seat.z - Math.cos(seat.yaw) * 1.4;
+  const sp = findSpawn(sx, sz, island);
+  const yaw = Math.atan2(sp.x - seat.x, sp.z - seat.z);
+  leaveDesk(true);
+  enterFpv(sp.x, sp.z, yaw);
+  toast('Đã đứng dậy — đang đi dạo.');
+});
 $('btnCoffee').addEventListener('click', orderCoffee);
 $('btnInvite').addEventListener('click', () => {
   const island = islandOf(myIsland);
@@ -2004,7 +2488,7 @@ $('nameInput').addEventListener('change', () => {
   }
 });
 addEventListener('beforeunload', () => {
-  if (myIsland > 0) {
+  if (myIsland > 0 || fpv) {
     const msg = { kind: 'gone', id: myId };
     try {
       if (floorHost) broadcastFloor(msg);
@@ -2013,6 +2497,380 @@ addEventListener('beforeunload', () => {
   }
   if (localStream) localStream.getTracks().forEach((tr) => tr.stop());
 });
+// ---------- FPV đi dạo + vỗ vai mời nói chuyện + convo + nhạc cà phê ----------
+islands.forEach((island) => {                                                // AABB khu bàn: ghế shrink 1.6m
+  if (!island.seats.length) return;
+  const xs = island.seats.map(s => s.x), zs = island.seats.map(s => s.z);
+  const b = { x0: Math.min(...xs) + 1.6, z0: Math.min(...zs) + 1.6, x1: Math.max(...xs) - 1.6, z1: Math.max(...zs) - 1.6 };
+  if (b.x1 - b.x0 < 0.4) { const c = (b.x0 + b.x1) / 2; b.x0 = c - 0.5; b.x1 = c + 0.5; }
+  if (b.z1 - b.z0 < 0.4) { const c = (b.z0 + b.z1) / 2; b.z0 = c - 0.5; b.z1 = c + 0.5; }
+  colliders.push(b);
+});
+colliders.push(
+  { x0: -12.4, z0: 4.4, x1: -9.9, z1: 9.4 },   // phòng server (staff only)
+  { x0: 10.6, z0: -9.4, x1: 12.4, z1: -4.4 },  // phòng security
+  { x0: -12.4, z0: -6.3, x1: -11.9, z1: -2.9 },// quầy cà phê
+  { x0: -2.4, z0: 5.9, x1: -0.6, z1: 7.4 },    // quầy lễ tân
+  { x0: 0.3, z0: 5.6, x1: 2.6, z1: 7.6 },      // hồ cá
+);
+export function isFpv() { return fpv; }
+function myPos() {
+  if (fpv) return { x: fpvPos.x, z: fpvPos.z, y: 0, walk: 1 };
+  if (myIsland) { const s = seatOf(myIsland, mySlot); if (s) return { x: s.x, z: s.z, y: s.y || 0 }; }
+  return null;
+}
+function posOf(row) {
+  if (!row) return null;
+  if (row.walk) return { x: row.wx, z: row.wz, y: 0, walk: 1 };
+  const s = seatOf(row.table, row.slot);
+  return s ? { x: s.x, z: s.z, y: s.y || 0 } : null;
+}
+function rowByWalk(wid) { for (const r of people.values()) if (r.walkId === wid) return r; return null; }
+function distGain(d) { return d <= HEAR_FULL ? 1 : Math.max(0, (HEAR_RANGE - d) / (HEAR_RANGE - HEAR_FULL)); }
+function hitWall(x, z) {
+  const r = 0.3;
+  return colliders.some(b => x + r > b.x0 && x - r < b.x1 && z + r > b.z0 && z - r < b.z1);
+}
+function findSpawn(sx, sz, island) {
+  let x = sx, z = sz;
+  if (hitWall(x, z)) {
+    if (island) {
+      let dx = sx - island.center.x, dz = sz - island.center.z;
+      const L = Math.hypot(dx, dz) || 1; dx /= L; dz /= L;
+      for (let i = 0; i < 40 && hitWall(x, z); i++) { x += dx * 0.2; z += dz * 0.2; }
+    }
+    if (hitWall(x, z)) { x = 0; z = 4; }
+  }
+  return { x, z };
+}
+function enterFpv(sx, sz, syaw) {
+  if (fpv) return;
+  if (!$('maker').hidden) { toast('Chọn hình đã rồi đi dạo nhé.'); return; }
+  if (myIsland > 0) leaveDesk();
+  ensureWalkPeer();
+  fpv = true;
+  fpvPos.set(sx ?? 0, 0, sz ?? 4); fpvYaw = syaw ?? Math.PI; fpvPitch = 0;
+  $('crosshair').hidden = false;
+  $('vwalk').setAttribute('aria-pressed', 'true');
+  buttons.forEach(b => { if (b.id !== 'vwalk') b.setAttribute('aria-pressed', 'false'); });
+  setFollow(-1);
+  $('hint').textContent = 'WASD di chuyển · chuột nhìn · click người gần để mời nói chuyện, xa để vỗ vai · Esc thả chuột, Home để về view';
+  setCamera(persp); controls.enabled = false; labelsEl.hidden = true; setTween(null);
+  canvas.requestPointerLock();
+  announceWalk();
+}
+function exitFpv() {
+  if (!fpv) return;
+  fpv = false; fpvKeys.clear();
+  $('crosshair').hidden = true;
+  $('vwalk').setAttribute('aria-pressed', 'false');
+  tapTarget = null;
+  if (document.pointerLockElement) document.exitPointerLock();
+  if (myIsland === 0) { myPresence = null; removeSeat(myId); sendPresence({ kind: 'gone', id: myId }); }
+  go('v3d');
+}
+document.addEventListener('pointerlockchange', () => {
+  if (fpv && document.pointerLockElement !== canvas) {
+    $('hint').textContent = 'Đi dạo tạm dừng · click vào màn hình để tiếp tục · Esc/Home để về view mặc định';
+  }
+});
+document.addEventListener('mousemove', (e) => {
+  if (!fpv || document.pointerLockElement !== canvas) return;
+  fpvYaw -= e.movementX * 0.0022;
+  fpvPitch = Math.max(-1.45, Math.min(1.45, fpvPitch - e.movementY * 0.0022));
+});
+const KEYMAP = { KeyW: [0, -1], KeyS: [0, 1], KeyA: [-1, 0], KeyD: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+document.addEventListener('keydown', (e) => { if (fpv && KEYMAP[e.code]) { fpvKeys.add(e.code); e.preventDefault(); } });
+document.addEventListener('keyup', (e) => fpvKeys.delete(e.code));
+export function tickSession(dt) {
+  if (fpv) fpvTick(dt);
+}
+function fpvTick(dt) {
+  let dx = 0, dz = 0;
+  fpvKeys.forEach(k => { dx += KEYMAP[k][0]; dz += KEYMAP[k][1]; });
+  if (dx || dz) {
+    const fx = -Math.sin(fpvYaw), fz = -Math.cos(fpvYaw);
+    const rx = Math.cos(fpvYaw), rz = -Math.sin(fpvYaw);
+    let mx = fx * -dz + rx * dx, mz = fz * -dz + rz * dx;
+    const L = Math.hypot(mx, mz) || 1, sp = 3 * dt / L;
+    mx *= sp; mz *= sp;
+    if (!hitWall(fpvPos.x + mx, fpvPos.z)) fpvPos.x += mx;
+    if (!hitWall(fpvPos.x, fpvPos.z + mz)) fpvPos.z += mz;
+    fpvPos.x = Math.max(-11.9, Math.min(11.9, fpvPos.x));
+    fpvPos.z = Math.max(-8.9, Math.min(8.9, fpvPos.z));
+  }
+  persp.position.set(fpvPos.x, 1.6, fpvPos.z);
+  persp.rotation.order = 'YXZ';
+  persp.rotation.set(fpvPitch, fpvYaw, 0);
+  sendWalkPos();
+}
+// 'move' gửi từ rAF (mượt ở foreground) LẪN interval 250ms — tab nền tạm dừng
+// rAF nên nếu chỉ gửi trong fpvTick thì remote thấy avatar đông cứng tại chỗ spawn.
+function sendWalkPos() {
+  const now = performance.now();
+  if (now - fpvSentAt < 100) return;
+  fpvSentAt = now;
+  sendPresence({ kind: 'move', id: myId, x: fpvPos.x, z: fpvPos.z, yaw: fpvYaw + Math.PI });
+}
+document.addEventListener('visibilitychange', () => {
+  if (fpv && document.hidden) { fpvSentAt = 0; sendWalkPos(); }
+});
+// --- walk peer: kênh mời nói chuyện + convo ---
+function ensureWalkPeer() {
+  if (walkPeer) return Promise.resolve();
+  return loadPeerLib().then((ok) => ok ? iceServers() : null).then((ice) => {
+    if (!ice || walkPeer) return;
+    walkPeer = new Peer(myWalkId(), peerOpts(ice));
+    walkPeer.on('connection', (conn) => {
+      wconns.set(conn.peer, conn);
+      conn.on('data', (d) => handleWalkData(conn.peer, d));
+      conn.on('close', () => wconns.delete(conn.peer));
+    });
+    walkPeer.on('call', (call) => {
+      if (!pendingWalk.has(call.peer) && !convoSet.has(call.peer)) { try { call.close(); } catch (e) {} return; }
+      pendingWalk.delete(call.peer);
+      try { call.answer(localStream || new MediaStream()); } catch (e) { try { call.close(); } catch (e2) {} return; }
+      walkCalls.set(call.peer, call);
+      convoSet.add(call.peer);
+      $('btnConvoEnd').hidden = false;
+      call.on('stream', (s) => addWalkStream(call.peer, s));
+      call.on('close', () => dropWalkPeer(call.peer));
+    });
+    walkPeer.on('error', (e) => { if (e && e.type === 'peer-unavailable') toast('Không kết nối được'); });
+  });
+}
+function addWalkStream(wid, stream) {
+  walkStreams.set(wid, stream);
+  playRemoteAudio(stream);
+  applyWalkGains();
+}
+function dropWalkPeer(wid) {
+  const s = walkStreams.get(wid);
+  if (s) { const a = remoteAudio.get(s.id); if (a) { try { a.pause(); a.srcObject = null; a.remove(); } catch (e) {} remoteAudio.delete(s.id); } }
+  walkCalls.delete(wid); walkStreams.delete(wid);
+  convoSet.delete(wid);
+  if (!convoSet.size) $('btnConvoEnd').hidden = true;
+}
+function dialWalk(wid) {
+  if (!walkPeer || walkCalls.has(wid)) return;
+  let conn = wconns.get(wid);
+  if (!conn || !conn.open) {
+    conn = walkPeer.connect(wid, { reliable: true });
+    wconns.set(wid, conn);
+  }
+  if (!conn.__hwd) { conn.__hwd = true; conn.on('data', (d) => handleWalkData(wid, d)); conn.on('close', () => wconns.delete(wid)); }
+  let call;
+  try { call = walkPeer.call(wid, localStream || new MediaStream()); } catch (e) { return; }
+  walkCalls.set(wid, call);
+  call.on('stream', (s) => addWalkStream(wid, s));
+  call.on('close', () => dropWalkPeer(wid));
+}
+function ensureVoiceThen(fn) {
+  if (localStream) { fn(); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('Trình duyệt này không mở được mic'); return; }
+  navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+    .then((s) => { localStream = s; micOn = true; fn(); })
+    .catch(() => toast('Không lấy được mic'));
+}
+function joinConvo(wid, members) {
+  if (pairPeer) exitPair();
+  ensureVoiceThen(() => {
+    convoSet.add(wid);
+    dialWalk(wid);
+    members.forEach((m) => { if (m !== myWalkId() && !convoSet.has(m)) { convoSet.add(m); setTimeout(() => dialWalk(m), 700); } });
+    $('btnConvoEnd').hidden = false;
+    applyGains(); applyWalkGains();
+    toast('Đang trò chuyện' + (convoSet.size > 1 ? ' · ' + convoSet.size + ' người' : ''));
+  });
+}
+function leaveConvo(silent) {
+  if (!convoSet.size && !walkCalls.size) return;
+  convoSet.forEach((wid) => { const c = wconns.get(wid); try { if (c && c.open) c.send({ kind: 'convo-leave', id: myWalkId() }); } catch (e) {} });
+  convoSet.clear();
+  walkCalls.forEach((c) => { try { c.close(); } catch (e) {} });
+  walkCalls.clear(); walkStreams.clear(); wconns.clear();
+  convoFar = 0;
+  $('btnConvoEnd').hidden = true;
+  applyGains(); applyWalkGains();
+  if (!silent) toast('Đã rời cuộc trò chuyện');
+}
+function handleWalkData(wid, d) {
+  if (!d || !d.kind) return;
+  if (d.kind === 'invite') {
+    if (dnd || pairPeer || convoSet.size) {
+      const c = wconns.get(wid);
+      try { if (c && c.open) c.send({ kind: 'invite-busy', reason: dnd ? 'dnd' : pairPeer ? 'pair' : 'convo' }); } catch (e) {}
+      return;
+    }
+    if (tapIn) clearTimeout(tapIn.timer);
+    tapIn = { walkId: wid, name: d.name || 'Ai đó' };
+    $('tapAskText').textContent = tapIn.name + ' vỗ vai bạn — nói chuyện?';
+    $('tapAsk').hidden = false;
+    tapIn.timer = setTimeout(() => { $('tapAsk').hidden = true; tapIn = null; }, 15000);
+  } else if (d.kind === 'invite-accept') {
+    joinConvo(wid, d.members || []);
+  } else if (d.kind === 'invite-busy') {
+    toast(d.reason === 'dnd' ? 'Người đó đang bật Không làm phiền' : d.reason === 'convo' ? 'Người đó đang trong cuộc trò chuyện khác' : 'Người đó đang nói riêng');
+  } else if (d.kind === 'convo-join') {
+    if (convoSet.size) { convoSet.add(d.id); pendingWalk.add(d.id); applyWalkGains(); }
+  } else if (d.kind === 'convo-leave') {
+    const c = walkCalls.get(d.id); try { if (c) c.close(); } catch (e) {}
+    dropWalkPeer(d.id);
+    applyWalkGains();
+  }
+}
+function walkGain(wid) {
+  if (!convoSet.has(wid)) return 0;
+  const me = myPos(), row = rowByWalk(wid), tp = row && posOf(row);
+  if (!me || !tp) return 0;
+  return distGain(Math.hypot(me.x - tp.x, me.z - tp.z));
+}
+function applyWalkGains() {
+  walkStreams.forEach((s, wid) => { const el = remoteAudio.get(s.id); if (el) el.volume = walkGain(wid); });
+}
+function sendInvite(row) {
+  if (!row || row.id === myId) return;
+  if (!row.walkId) { toast((row.name || 'Người đó') + ' chưa hỗ trợ nói chuyện khi đi dạo.'); return; }
+  if (convoSet.size && convoSet.has(row.walkId)) return;
+  ensureWalkPeer().then(() => {
+    if (!walkPeer) { toast('Không nối được kênh nói chuyện.'); return; }
+    let conn = wconns.get(row.walkId);
+    if (!conn || !conn.open) {
+      conn = walkPeer.connect(row.walkId, { reliable: true });
+      wconns.set(row.walkId, conn);
+      conn.on('open', () => conn.send({ kind: 'invite', name: myName() }));
+    } else conn.send({ kind: 'invite', name: myName() });
+    if (!conn.__hwd) { conn.__hwd = true; conn.on('data', (d) => handleWalkData(row.walkId, d)); conn.on('close', () => wconns.delete(row.walkId)); }
+    toast('Đã vỗ vai ' + row.name + ' — chờ nhận');
+  });
+}
+// --- nút Đi tới trên tapNotice: teleport ra sau lưng người vỗ vai rồi auto mời ---
+function goToTapper() {
+  const row = people.get(tapFrom);
+  $('tapNotice').hidden = true;
+  if (!row) { toast('Không thấy người đã vỗ vai nữa.'); return; }
+  const p = posOf(row);
+  if (!p) { toast('Không định vị được ' + row.name + '.'); return; }
+  const back = row.walk ? (row.wyaw || 0) : (seatOf(row.table, row.slot) ? seatOf(row.table, row.slot).yaw : 0);
+  let x = p.x - Math.sin(back) * 1.3;
+  let z = p.z - Math.cos(back) * 1.3;
+  if (hitWall(x, z)) {
+    const s = findSpawn(x, z, islandOf(row.table));
+    x = s.x; z = s.z;
+  }
+  const yaw = Math.atan2(x - p.x, z - p.z);
+  if (fpv) { fpvPos.set(x, 0, z); fpvYaw = yaw; fpvPitch = 0; fpvSentAt = 0; sendWalkPos(); }
+  else enterFpv(x, z, yaw);
+  if (row.walkId) setTimeout(() => sendInvite(row), 400);
+}
+$('tapGo').addEventListener('click', goToTapper);
+// FPV giữ pointer lock nên không click được nút — phím tắt cho các dialog:
+// T = đi tới người vỗ vai · Y/Enter = nhận · N = từ chối.
+document.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  const tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.code === 'KeyT' && !$('tapNotice').hidden) { e.preventDefault(); goToTapper(); return; }
+  if (e.code === 'KeyY' || e.code === 'Enter') {
+    if (!$('tapAsk').hidden) { e.preventDefault(); $('tapYes').click(); }
+    else if (!$('pairAsk').hidden) { e.preventDefault(); $('pairYes').click(); }
+  } else if (e.code === 'KeyN') {
+    if (!$('tapAsk').hidden) { e.preventDefault(); $('tapNo').click(); }
+    else if (!$('pairAsk').hidden) { e.preventDefault(); $('pairNo').click(); }
+  }
+});
+// --- nhạc cà phê: YouTube ẩn, 80% trong zone, 0 ngoài ---
+window.onYouTubeIframeAPIReady = () => {
+  ytPlayer = new YT.Player('ytBox', {
+    videoId: ytVid,
+    playerVars: { autoplay: 1, mute: 1, loop: 1, playlist: ytVid, controls: 0, disablekb: 1, rel: 0, playsinline: 1 },
+    events: { onReady: () => { ytReady = true; } },
+  });
+};
+(() => { const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s); })();
+const armYt = () => { if (ytArmed || !ytReady) return; try { ytPlayer.unMute(); ytPlayer.playVideo(); ytArmed = true; } catch (e) {} };
+addEventListener('pointerdown', armYt);
+addEventListener('keydown', armYt);
+function cafeGain() {
+  const me = myPos();
+  if (!me || dnd) return 0;
+  const inZone = me.x >= CAFE_ZONE.x0 && me.x <= CAFE_ZONE.x1 && me.z >= CAFE_ZONE.z0 && me.z <= CAFE_ZONE.z1;
+  if (!inZone) return 0;
+  if (pairPeer && !inMeeting()) return 0;
+  let g = 0.8;
+  if (pairPeer && inMeeting()) g = PAIR_DUCK;
+  else if (convoSet.size) g *= 0.15;
+  return g;
+}
+const tapTagEl = document.createElement('button');
+tapTagEl.id = 'tapTag'; tapTagEl.type = 'button'; tapTagEl.hidden = true;
+tapTagEl.addEventListener('click', () => { if (tapTarget) sendInvite(tapTarget); });
+document.body.appendChild(tapTagEl);
+setInterval(() => {
+  if (ytPlayer && ytReady && ytArmed) { try { ytPlayer.setVolume(Math.round(cafeGain() * 100)); } catch (e) {} }
+  if (fpv) sendWalkPos();
+  let best = null, bd = TAP_RANGE;
+  if (fpv) {
+    people.forEach((row) => {
+      if (row.id === myId || !row.walkId) return;
+      if (convoSet.size && convoSet.has(row.walkId)) return;
+      const p = posOf(row);
+      if (!p) return;
+      const d = Math.hypot(fpvPos.x - p.x, fpvPos.z - p.z);
+      if (d < bd) { bd = d; best = row; }
+    });
+  }
+  tapTarget = best;
+  if (tapTarget) tapTagEl.textContent = 'Vỗ vai ' + tapTarget.name;
+  if (convoSet.size) {
+    const me = myPos();
+    const near = me && [...convoSet].some((wid) => {
+      const r = rowByWalk(wid), p = r && posOf(r);
+      return p && Math.hypot(me.x - p.x, me.z - p.z) <= HEAR_RANGE * 1.5;
+    });
+    convoFar = near ? 0 : convoFar + 0.25;
+    if (convoFar >= 5) { leaveConvo(); toast('Đi quá xa — đã rời cuộc trò chuyện'); }
+    else applyWalkGains();
+  }
+}, 250);
+
+$('tapYes').addEventListener('click', () => {
+  $('tapAsk').hidden = true;
+  const t = tapIn; tapIn = null;
+  if (!t) return;
+  if (pairPeer) exitPair();
+  ensureWalkPeer().then(() => ensureVoiceThen(() => {
+    const conn = wconns.get(t.walkId);
+    try { if (conn && conn.open) conn.send({ kind: 'invite-accept', members: [...convoSet, myWalkId()] }); } catch (e) {}
+    wconns.forEach((c, w) => { try { if (convoSet.has(w) && c.open) c.send({ kind: 'convo-join', id: t.walkId }); } catch (e) {} });
+    pendingWalk.add(t.walkId);
+    convoSet.add(t.walkId);
+    $('btnConvoEnd').hidden = false;
+    applyGains();
+  }));
+});
+$('tapNo').addEventListener('click', () => {
+  $('tapAsk').hidden = true;
+  const t = tapIn; tapIn = null;
+  if (!t) return;
+  const conn = wconns.get(t.walkId);
+  try { if (conn && conn.open) conn.send({ kind: 'invite-busy', reason: 'decline' }); } catch (e) {}
+});
+$('btnConvoEnd').addEventListener('click', () => leaveConvo());
+$('vwalk').addEventListener('click', () => enterFpv());
+$('vhome').addEventListener('click', () => { exitFpv(); go('v3d'); });
+$('btnBc').addEventListener('click', () => {
+  if (pairPeer) { toast('Đang nói riêng — Kết thúc trước đã.'); return; }
+  if (dnd) { toast('Đang bật Không làm phiền.'); return; }
+  broadcastOn = !broadcastOn;
+  sendState(); syncPairUI();
+  toast(broadcastOn ? 'Cả đảo đang nghe bạn.' : 'Đã tắt nói cả bàn.');
+});
+$('btnDnd').addEventListener('click', () => setDnd(!dnd));
+$('btnPairEnd').addEventListener('click', () => exitPair());
+$('pairYes').addEventListener('click', acceptPair);
+$('pairNo').addEventListener('click', () => { if (pairIn) declinePair(pairIn.pid); });
+
 loadPeerLib().then((ok) => { if (ok) claimFloor(); });
 
 
@@ -2031,3 +2889,7 @@ hooks.myId = () => myId;
 hooks.mySlot = () => mySlot;
 hooks.isHost = () => floorHost;
 hooks.sendFloor = (msg) => { if (floorLink && floorLink.open) { try { floorLink.send(msg); } catch (e) {} } };
+hooks.posOf = (r) => posOf(r);
+hooks.upsertSeat = upsertSeat;
+hooks.removeSeat = removeSeat;
+hooks.people = () => people;

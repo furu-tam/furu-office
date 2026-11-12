@@ -1453,6 +1453,7 @@ export let myIsland = 0;
 export let hoveredIsland = -1;
 export const buttons = [...document.querySelectorAll('#dockView button')];
 export function go(id) {
+  if (id !== 'vagent' && !VIEWS[id]) return;
   hooks.endFishWatch();
   if (id !== 'vagent') follow = -1;
   buttons.forEach(b => b.setAttribute('aria-pressed', String(b.id === id)));
@@ -1479,7 +1480,7 @@ export function go(id) {
   if (REDUCED) { persp.position.copy(p1); controls.target.copy(t1); tween = null; return; }
   tween = { p0: persp.position.clone(), t0: controls.target.clone(), p1, t1, s: 0 };
 }
-buttons.forEach(b => { if (b.id !== 'btnFish') b.addEventListener('click', () => go(b.id)); });
+buttons.forEach(b => { if (b.id !== 'btnFish' && b.id !== 'vwalk' && b.id !== 'vhome') b.addEventListener('click', () => go(b.id)); });
 controls.addEventListener('start', () => { tween = null; });
 
 function resize() {

@@ -318,3 +318,42 @@
     #maker .preview { min-height: 360px; }
     #maker .row { grid-template-columns: 1fr; gap: 6px; }
   }
+
+/* ---------- đi dạo FPV + vỗ vai + nói riêng + DND ---------- */
+#crosshair {
+  position: fixed; z-index: 5; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: rgba(255, 255, 255, 0.85); font: 400 20px/1 monospace; pointer-events: none;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+}
+#tapTag {
+  position: fixed; z-index: 6; transform: translate(-50%, -100%);
+  font: 600 12px var(--f-body, system-ui, sans-serif); color: #062028; background: var(--accent, #3fd0c0);
+  border: 0; border-radius: 999px; padding: 6px 14px; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); white-space: nowrap;
+}
+#tapTag[hidden] { display: none !important; }
+#pairAsk, #tapAsk {
+  position: fixed; z-index: 8; left: 50%; bottom: 96px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(8, 28, 42, 0.9); border: 1px solid rgba(63, 208, 192, 0.5); border-radius: 12px;
+  padding: 10px 14px; color: #f3f8f8; font-size: 13px; backdrop-filter: blur(8px);
+}
+#pairAsk[hidden], #tapAsk[hidden] { display: none !important; }
+#pairAsk button, #tapAsk button {
+  font: 600 12px inherit; border-radius: 999px; padding: 6px 14px; cursor: pointer; border: 1px solid transparent;
+}
+#pairYes, #tapYes { background: var(--accent, #3fd0c0); color: #062028; }
+#pairNo, #tapNo { background: transparent; color: #ffc2b8; border-color: rgba(224, 112, 96, 0.75) !important; }
+#btnConvoEnd {
+  position: fixed; z-index: 7; left: 50%; bottom: 62px; transform: translateX(-50%);
+  font: 600 12px inherit; color: #ffc2b8; background: rgba(8, 28, 42, 0.9);
+  border: 1px solid rgba(224, 112, 96, 0.75); border-radius: 999px; padding: 7px 16px; cursor: pointer;
+}
+#btnConvoEnd[hidden] { display: none !important; }
+#tapNotice button {
+  margin-left: 8px; font: 600 11.5px inherit; background: var(--accent, #3fd0c0); color: #062028;
+  border: 0; border-radius: 999px; padding: 4px 12px; cursor: pointer;
+}
+.dock button.live { background: var(--accent, #3fd0c0); color: #062028; }
+.dock button.locked { opacity: 0.45; cursor: not-allowed; }
+#ytBox { position: fixed; left: -9999px; top: 0; width: 2px; height: 2px; overflow: hidden; }

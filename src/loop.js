@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { placeOffice, updateVoiceMeters } from './session.js';
+import { placeOffice, updateVoiceMeters, tickSession, isFpv } from './session.js';
 import { tickAvatar } from './avatar.js';
+import { perfStart, perfEnd } from './perf.js';
 import {
   AGENTS, AQ, G, REDUCED, T, boat, camera, controls, follow, gulls, ortho, persp, rackMats, renderer, scene, seaMat, setTween, tags, tween, updateAgents, updateServer
 } from './world.js';
@@ -8,7 +9,14 @@ import {
 // ---------- loop ----------
 const clock = new THREE.Clock();
 const tmp = new THREE.Vector3();
+let shadowTick = 0;
+// Bóng đổ render lại mỗi 3 frame: avatar cử động chậm (thở ~6mm) nên
+// shadow map re-render mỗi frame lãng phí ~26% CPU ở phòng 20 người.
+// ?noshadow để A/B benchmark.
+const SHADOW_DIV = new URLSearchParams(location.search).has('noshadow') ? 1 : 3;
 renderer.setAnimationLoop(() => {
+  perfStart();
+  renderer.shadowMap.autoUpdate = (shadowTick++ % SHADOW_DIV) === 0;
   const dt = Math.min(clock.getDelta(), 0.05);
   T.value += dt; seaMat.uniforms.uT.value = T.value;
   boat.position.x = -60 + ((T.value * 1.2) % 140); boat.rotation.z = Math.sin(T.value * 0.9) * 0.04;
@@ -16,7 +24,11 @@ renderer.setAnimationLoop(() => {
   AQ.update(dt);
   updateAgents(dt, T.value);
   updateServer(dt);
-  for (const person of G.people.children) if (person.userData.avatar) tickAvatar(person.userData.avatar, dt, T.value, REDUCED);
+  for (const person of G.people.children) {
+    const av = person.userData.avatar;
+    if (!av) continue;
+    tickAvatar(av, dt, T.value, REDUCED);
+  }
   for (const b of gulls) {
     b.a += b.speed * dt;
     const ca = Math.cos(b.a), sa = Math.sin(b.a);
@@ -53,7 +65,7 @@ renderer.setAnimationLoop(() => {
     tmp.set(a.g.position.x - fx * 2.8, 2.0, a.g.position.z - fz * 2.8); persp.position.lerp(tmp, kf);
     tmp.set(a.g.position.x + fx * 1.0, 0.8, a.g.position.z + fz * 1.0); controls.target.lerp(tmp, kf);
     persp.lookAt(controls.target);
-  } else if (camera === persp && !tween) controls.update();
+  } else if (camera === persp && !tween && !isFpv()) controls.update();
   else if (camera !== persp) {
     const w = innerWidth, h = innerHeight;
     for (const t of tags) {
@@ -61,7 +73,9 @@ renderer.setAnimationLoop(() => {
       t.el.style.left = `${(tmp.x * 0.5 + 0.5) * w}px`; t.el.style.top = `${(-tmp.y * 0.5 + 0.5) * h}px`;
     }
   }
+  tickSession(dt);
   placeOffice();
   updateVoiceMeters();
   renderer.render(scene, camera);
+  perfEnd();
 });
