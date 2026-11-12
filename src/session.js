@@ -706,6 +706,7 @@ function enterDesk(index, slot) {
   setMyIsland(index + 1);
   mySlot = slot;
   dbgEv('sit đảo' + (index + 1) + ' chỗ' + slot);
+  try { localStorage.setItem('furu-office-seat', JSON.stringify({ i: myIsland, s: mySlot, t: Date.now() })); } catch (e) {}
   const island = islands[index];
   const quiet = !!island.quiet;
   document.body.classList.toggle('in-room', !quiet);
@@ -779,6 +780,7 @@ function leaveDesk(silent) {
   micOn = false;
   camOn = false;
   setMyIsland(0);
+  try { localStorage.removeItem('furu-office-seat'); } catch (e) {}
   document.body.classList.remove('in-room');
   applyChrome();
   $('dockView').hidden = false;
@@ -2993,6 +2995,17 @@ $('pairYes').addEventListener('click', acceptPair);
 $('pairNo').addEventListener('click', () => { if (pairIn) declinePair(pairIn.pid); });
 
 loadPeerLib().then((ok) => { if (ok) claimFloor(); });
+// Chrome tự reload tab bị discard khi focus lại — tự ngồi lại chỗ cũ (<12h) để
+// trải nghiệm như chưa chết. Không restore FPV (auto-grab chuột rất khó chịu).
+try {
+  const sv = JSON.parse(localStorage.getItem('furu-office-seat') || 'null');
+  if (sv && sv.i > 0 && Date.now() - sv.t < 12 * 3600e3) {
+    setTimeout(() => {
+      const used = takenSlots(sv.i - 1);
+      joinDesk(sv.i - 1, used.has(sv.s) ? -1 : sv.s - 1);
+    }, 1200);
+  }
+} catch (e) {}
 
 
 
