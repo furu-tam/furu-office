@@ -65,6 +65,9 @@ Panel ruột PeerJS (peer/conn/call/ICE/stream/floor/walk + log sự kiện):
   hoặc `localStorage['furu-dbg']='1'` rồi reload.
 - Panel ở góc trái dưới, cập nhật 2 lần/giây; `conn=dead`, `call=dead`,
   `ice=failed` là dấu hiệu kết nối nửa vời cần chú ý.
+- **Gửi log cho Devin**: log persist trong localStorage (sống qua reload,
+  200 dòng, gồm cả lỗi JS/promise). Panel mở → bấm `c` → paste vào chat;
+  hoặc console `__dbgCopy()`.
 
 ## Kiến trúc nhanh
 

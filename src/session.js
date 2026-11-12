@@ -54,13 +54,18 @@ let localMeter = null;
 const remoteMeters = new Map();
 const MIC_HTML = '<span class="mic" hidden aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5.3-3A5.3 5.3 0 0 1 12 16.2 5.3 5.3 0 0 1 6.7 11H5a7 7 0 0 0 6 6.7V21h2v-3.3A7 7 0 0 0 19 11h-1.7z"/></svg><i></i><i></i><i></i></span>';
 let peers = {};
-// log sự kiện kết nối cho debug panel (?debug=1 hoặc phím `)
+// log sự kiện kết nối cho debug panel (?debug=1 hoặc phím `) — persist vào
+// localStorage để sống qua reload; bấm c trong panel là copy hết để gửi Devin.
 const dbgLog = [];
 function dbgEv(msg) {
-  dbgLog.push((performance.now() / 1000).toFixed(1) + ' ' + msg);
-  if (dbgLog.length > 60) dbgLog.shift();
+  const line = new Date().toLocaleTimeString('en-GB') + ' ' + msg;
+  dbgLog.push(line);
+  if (dbgLog.length > 200) dbgLog.shift();
+  try { localStorage.setItem('furu-dbgl', JSON.stringify(dbgLog.slice(-200))); } catch (e) {}
 }
 const pidShort = (pid) => String(pid || '').slice(-6);
+try { const prev = JSON.parse(localStorage.getItem('furu-dbgl') || '[]'); if (Array.isArray(prev)) dbgLog.push.apply(dbgLog, prev.slice(-200)); } catch (e) {}
+dbgEv('— boot ' + myId + ' —');
 let myPeer = null;
 let broadcastOn = false;   // đang nói cho cả đảo
 let dnd = false;           // không làm phiền: khóa mic/cam, im lặng, từ chối mọi lời mời
@@ -3021,6 +3026,8 @@ hooks.debug = () => ({
   walk: { peer: walkPeer ? walkPeer.id : null, convo: convoSet.size, conns: wconns.size, streams: walkStreams.size, calls: walkCalls.size },
   log: dbgLog.slice(-24),
 });
+hooks.dbgEv = dbgEv;
+hooks.dbgLog = () => dbgLog.slice();
 hooks.upsertSeat = upsertSeat;
 hooks.removeSeat = removeSeat;
 hooks.people = () => people;
