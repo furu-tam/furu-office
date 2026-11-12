@@ -1131,6 +1131,39 @@ function pushStream() {
     dial(row.peerId);
   });
 }
+// Tab bị OS ngủ/discard rồi tỉnh lại có thể khiến audio track 'ended' ngầm —
+// sender vẫn gửi track chết nên bên kia nghe im lặng (lỗi nghe 1 chiều).
+// Watchdog: track mic chết hết thì lấy lại stream và đẩy vào call mới.
+let micReacquiring = false;
+function reacquireMic() {
+  if (micReacquiring) return;
+  const md = navigator.mediaDevices;
+  if (!md || !md.getUserMedia) return;
+  micReacquiring = true;
+  dbgEv('mic reacquire');
+  md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false })
+    .catch(() => md.getUserMedia({ audio: true, video: false }))
+    .then((stream) => {
+      if (!micOn) { stream.getTracks().forEach((t) => t.stop()); return; }
+      const old = localStream;
+      localStream = stream;
+      if (old) old.getTracks().forEach((t) => {
+        try { if (t.readyState === 'live' && t.kind === 'video') localStream.addTrack(t); else t.stop(); } catch (e) {}
+      });
+      pushStream();
+      walkCalls.forEach((call, wid) => { try { call.close(); } catch (e) {} walkCalls.delete(wid); });
+      convoSet.forEach((wid) => setTimeout(() => dialWalk(wid), 300));
+      updateSelf();
+      sendState();
+      toast('Mic vừa tự nối lại.');
+      dbgEv('mic reacquired');
+    })
+    .catch(() => {})
+    .finally(() => { micReacquiring = false; });
+}
+setInterval(() => {
+  if (micOn && localStream && !localStream.getAudioTracks().some((t) => t.readyState === 'live')) reacquireMic();
+}, 4000);
 async function ensureVideo() {
   if (localStream && localStream.getVideoTracks().some((t) => t.readyState === 'live')) {
     localStream.getVideoTracks().forEach((t) => { t.enabled = true; });
@@ -2044,10 +2077,41 @@ function destroyFloor() {
 function peerOpts(ice) {
   return { config: { iceServers: ice, sdpSemantics: 'unified-plan' }, secure: true };
 }
+let reprobeAt = performance.now();
+// Probe thử hub i có host nào trả lời beat không (peer ẩn danh, dùng xong destroy).
+function probeAlive(index, done) {
+  iceServers().then((ice) => {
+    let p;
+    try { p = new Peer(undefined, peerOpts(ice)); } catch (e) { done(false); return; }
+    let settled = false;
+    const fin = (ok) => { if (settled) return; settled = true; try { p.destroy(); } catch (e) {} done(ok); };
+    const to = setTimeout(() => fin(false), 8000);
+    p.on('open', () => {
+      const conn = p.connect(HUBS[index], { reliable: true });
+      conn.on('open', () => { try { conn.send({ kind: 'ping' }); } catch (e) {} });
+      conn.on('data', (m) => { if (m && (m.kind === 'beat' || m.kind === 'roster')) { clearTimeout(to); fin(true); } });
+      conn.on('close', () => fin(false));
+      conn.on('error', () => fin(false));
+    });
+    p.on('error', () => fin(false));
+  });
+}
 function startFloorWatch(gen) {
   clearInterval(floorTimer);
   floorTimer = setInterval(() => {
     if (gen !== floorGen) return;
+    // Hội tụ về hub số thấp nhất còn sống: host chết mà giữ ID hub thấp sẽ làm
+    // floor tách thành nhiều hub song song — ai thấy hub thấp sống lại thì claimFloor() quay về.
+    if (floorHub > 0 && performance.now() - reprobeAt > 40000) {
+      reprobeAt = performance.now();
+      (function tryLower(i) {
+        if (i < 0 || gen !== floorGen || floorHub === 0) return;
+        probeAlive(i, (ok) => {
+          if (ok && gen === floorGen && floorHub > 0) { dbgEv('floor converge hub' + i); claimFloor(); }
+          else if (gen === floorGen) tryLower(i - 1);
+        });
+      })(floorHub - 1);
+    }
     if (floorHost) {
       broadcastFloor({ kind: 'beat', t: Date.now() });
       const now = performance.now();
