@@ -240,6 +240,7 @@ function deliverTap(msg) {
   tapFrom = msg.from;
   const sender = people.get(msg.from);
   if (sender) sender.bump = performance.now();
+  pushNotif('tap', name, { id: msg.from });
   const box = $('tapNotice');
   box.hidden = false;
   box.querySelector('span').textContent = name + ' đang gọi bạn.';
@@ -1293,15 +1294,25 @@ function onChat(cm) {
   if (!cm || cm.kind !== 'msg' || !cm.text) return;
   appendChat(cm.from, cm.name, cm.text, false);
 }
-function appendChat(from, name, text, note) {
+const CHAT_GAP_MS = 10 * 60e3;
+let lastChatT = 0;
+const fmtTime = (t) => { const d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); };
+function appendChat(from, name, text, note, t) {
   const box = $('chatMsgs');
+  const ts = t || Date.now();
+  if (lastChatT && ts - lastChatT > CHAT_GAP_MS) {
+    const hr = document.createElement('hr');
+    hr.className = 'chat-gap';
+    box.appendChild(hr);
+  }
+  lastChatT = ts;
   const mine = from === myId;
   const row = people.get(from);
   const island = row && islandOf(row.table);
   const place = island ? ' · ' + island.label : '';
   const m = document.createElement('div');
   m.className = 'msg' + (mine ? ' me' : '');
-  m.innerHTML = '<span class="who-name">' + esc(mine ? 'Bạn' : (name || 'Đồng nghiệp')) + esc(place) + ':</span> ' + esc(text);
+  m.innerHTML = '<span class="ts">' + fmtTime(ts) + '</span><span class="who-name">' + esc(mine ? 'Bạn' : (name || 'Đồng nghiệp')) + esc(place) + ':</span> ' + esc(text);
   box.appendChild(m);
   while (box.children.length > 80) box.removeChild(box.firstChild);
   box.scrollTop = box.scrollHeight;
@@ -1336,13 +1347,13 @@ function onSay(msg, relay, fromLog) {
   if (fresh) {
     seenSay.add(id);
     if (seenSay.size > 120) seenSay.delete(seenSay.values().next().value);
-    const entry = { id, from: msg.from, name: msg.name, text };
+    const entry = { id, from: msg.from, name: msg.name, text, t: msg.t || Date.now() };
     roomLog.push(entry);
     if (roomLog.length > 30) roomLog.shift();
-    appendChat(msg.from, msg.name, text, !fromLog);
+    appendChat(msg.from, msg.name, text, !fromLog, msg.t);
     if (!fromLog) showBubble(msg.from, msg.name, text);
   }
-  if (relay && floorHost) broadcastFloor({ kind: 'say', id, from: msg.from, name: msg.name, text });
+  if (relay && floorHost) broadcastFloor({ kind: 'say', id, from: msg.from, name: msg.name, text, t: msg.t });
 }
 function sendSay(text) {
   const msg = {
@@ -1350,7 +1361,8 @@ function sendSay(text) {
     id: myId + '-' + Date.now().toString(36),
     from: myId,
     name: myName(),
-    text: String(text).slice(0, 300)
+    text: String(text).slice(0, 300),
+    t: Date.now()
   };
   onSay(msg, floorHost, false);
   if (floorHost) return;
@@ -1367,6 +1379,67 @@ function setChatNote(n) {
   });
 }
 function clearChatNote() { setChatNote(0); }
+// ---------- chuông thông báo: giữ lại ai vỗ vai/mời khi đang bận, kèm giờ + Đi tới ----------
+const notifList = [];
+let bellUnread = 0;
+try {
+  const prev = JSON.parse(localStorage.getItem('furu-notif') || '[]');
+  if (Array.isArray(prev)) prev.slice(0, 30).forEach((n) => { if (n && n.t) notifList.push(n); });
+} catch (e) {}
+function saveNotif() { try { localStorage.setItem('furu-notif', JSON.stringify(notifList.slice(0, 30))); } catch (e) {} }
+const NOTIF_TEXT = { tap: 'vỗ vai bạn', invite: 'mời bạn nói chuyện', pair: 'mời bạn nói riêng' };
+function pushNotif(kind, name, ref) {
+  notifList.unshift({ t: Date.now(), kind, name: String(name || 'Ai đó').slice(0, 24), ...(ref || {}) });
+  if (notifList.length > 30) notifList.pop();
+  saveNotif();
+  renderBell();
+  const panel = $('bellPanel');
+  if (panel && panel.hidden) {
+    bellUnread++;
+    const b = $('btnBell');
+    b.classList.add('has-note');
+    b.dataset.n = bellUnread > 9 ? '9+' : String(bellUnread);
+  }
+}
+function renderBell() {
+  const list = $('bellList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!notifList.length) {
+    const d = document.createElement('div');
+    d.className = 'bell-empty';
+    d.textContent = 'Chưa có thông báo.';
+    list.appendChild(d);
+    return;
+  }
+  notifList.forEach((n) => {
+    const d = document.createElement('div');
+    d.className = 'bell-item';
+    const row = n.id ? people.get(n.id) : (n.wid ? rowByWalk(n.wid) : null);
+    const canGo = !!(row && posOf(row));
+    d.innerHTML = '<span class="ts">' + fmtTime(n.t) + '</span><span class="tx"><b>' + esc(n.name) + '</b> ' + esc(NOTIF_TEXT[n.kind] || n.kind) + '</span>';
+    const btn = document.createElement('button');
+    btn.textContent = canGo ? 'Đi tới' : 'đã rời';
+    btn.disabled = !canGo;
+    if (canGo) btn.addEventListener('click', () => { $('bellPanel').hidden = true; goToRow(row); });
+    d.appendChild(btn);
+    list.appendChild(d);
+  });
+}
+if ($('btnBell')) {
+  $('btnBell').addEventListener('click', () => {
+    const panel = $('bellPanel');
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) {
+      bellUnread = 0;
+      const b = $('btnBell');
+      b.classList.remove('has-note');
+      delete b.dataset.n;
+      renderBell();
+    }
+  });
+  renderBell();
+}
 function refreshConnText() {
   if (myIsland === 0) return;
   const n = Object.keys(peers).length;
@@ -1670,6 +1743,8 @@ function handleData(pid, m) {
       return;
     }
     pairIn = { pid, timer: setTimeout(() => declinePair(pid, true), 15000) };
+    const prow = seatByPeer(pid);
+    pushNotif('pair', String(m.name || entry.name || 'Ai đó').slice(0, 24), { id: prow && prow.id });
     showPairAsk(String(m.name || entry.name || 'Ai đó').slice(0, 24));
   } else if (m.kind === 'pair-accept') {
     if (pairOut && pairOut.pid === pid) { clearTimeout(pairOut.timer); pairOut = null; enterPair(pid); }
@@ -2823,6 +2898,7 @@ function handleWalkData(wid, d) {
     }
     if (tapIn) clearTimeout(tapIn.timer);
     tapIn = { walkId: wid, name: d.name || 'Ai đó' };
+    pushNotif('invite', tapIn.name, { wid });
     $('tapAskText').textContent = tapIn.name + ' vỗ vai bạn — nói chuyện?';
     $('tapAsk').hidden = false;
     tapIn.timer = setTimeout(() => { $('tapAsk').hidden = true; tapIn = null; }, 15000);
@@ -2863,9 +2939,8 @@ function sendInvite(row) {
     toast('Đã vỗ vai ' + row.name + ' — chờ nhận');
   });
 }
-// --- nút Đi tới trên tapNotice: teleport ra sau lưng người vỗ vai rồi auto mời ---
-function goToTapper() {
-  const row = people.get(tapFrom);
+// --- nút Đi tới trên tapNotice/chuông: teleport ra sau lưng người vỗ vai rồi auto mời ---
+function goToRow(row) {
   $('tapNotice').hidden = true;
   if (!row) { toast('Không thấy người đã vỗ vai nữa.'); return; }
   const p = posOf(row);
@@ -2882,6 +2957,7 @@ function goToTapper() {
   else enterFpv(x, z, yaw);
   if (row.walkId) setTimeout(() => sendInvite(row), 400);
 }
+function goToTapper() { goToRow(people.get(tapFrom)); }
 $('tapGo').addEventListener('click', goToTapper);
 // FPV giữ pointer lock nên không click được nút — phím tắt cho các dialog:
 // T = đi tới người vỗ vai · Y/Enter = nhận · N = từ chối.
@@ -2889,6 +2965,7 @@ document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const tag = e.target && e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.code === 'Escape' && $('bellPanel') && !$('bellPanel').hidden) { $('bellPanel').hidden = true; return; }
   if (e.code === 'KeyE' && fpv && sitNear) { e.preventDefault(); sitFromWalk(); return; }
   if (e.code === 'KeyG' && (fpv || myIsland > 0)) { e.preventDefault(); callAgent(); return; }
   if (e.code === 'KeyT' && !$('tapNotice').hidden) { e.preventDefault(); goToTapper(); return; }
