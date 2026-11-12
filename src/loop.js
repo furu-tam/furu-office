@@ -3,7 +3,7 @@ import { placeOffice, updateVoiceMeters, tickSession, isFpv } from './session.js
 import { tickAvatar } from './avatar.js';
 import { perfStart, perfEnd } from './perf.js';
 import {
-  AGENTS, AQ, G, REDUCED, T, boat, camera, controls, follow, gulls, ortho, persp, rackMats, renderer, scene, seaMat, setTween, tags, tween, updateAgents, updateServer
+  AQ, G, REDUCED, T, boat, camera, controls, gulls, ortho, persp, rackMats, renderer, scene, seaMat, setTween, tags, tween, updateAgents, updateServer
 } from './world.js';
 
 // ---------- loop ----------
@@ -60,12 +60,14 @@ renderer.setAnimationLoop(() => {
       }
     }
   }
-  if (follow >= 0) {
-    const a = AGENTS[follow], fx = Math.sin(a.yaw), fz = Math.cos(a.yaw), kf = 1 - Math.exp(-dt * 2.5);
-    tmp.set(a.g.position.x - fx * 2.8, 2.0, a.g.position.z - fz * 2.8); persp.position.lerp(tmp, kf);
-    tmp.set(a.g.position.x + fx * 1.0, 0.8, a.g.position.z + fz * 1.0); controls.target.lerp(tmp, kf);
-    persp.lookAt(controls.target);
-  } else if (camera === persp && !tween && !isFpv()) controls.update();
+  // Theo agent đã ẩn trên thanh công cụ.
+  // if (follow >= 0) {
+  //   const a = AGENTS[follow], fx = Math.sin(a.yaw), fz = Math.cos(a.yaw), kf = 1 - Math.exp(-dt * 2.5);
+  //   tmp.set(a.g.position.x - fx * 2.8, 2.0, a.g.position.z - fz * 2.8); persp.position.lerp(tmp, kf);
+  //   tmp.set(a.g.position.x + fx * 1.0, 0.8, a.g.position.z + fz * 1.0); controls.target.lerp(tmp, kf);
+  //   persp.lookAt(controls.target);
+  // } else
+  if (camera === persp && !tween && !isFpv()) controls.update();
   else if (camera !== persp) {
     const w = innerWidth, h = innerHeight;
     for (const t of tags) {
