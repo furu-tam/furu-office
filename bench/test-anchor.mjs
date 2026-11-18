@@ -39,13 +39,18 @@ try {
   const bId = await B.evaluate(() => __bench.myId());
   const cId = await C.evaluate(() => __bench.myId());
 
-  // A,B đi dạo -> A mời B -> B nhận -> convo
+  // A,B đi dạo -> teleport B về gần A -> A mời B -> B nhận -> convo
   await A.evaluate(() => document.getElementById('vwalk').click());
   await B.evaluate(() => document.getElementById('vwalk').click());
   await B.waitForTimeout(2500);
   // chờ C thấy A,B trên floor (walk presence lan đủ)
   await C.waitForFunction((ids) => ids.every((i) => __bench.rows().some((r) => r.id === i)),
     [aId, bId], { timeout: 30000, polling: 500 });
+  // teleport B về gần A trước khi convo — spawn corridor trải ra, convoFar kick nếu >3.9m
+  await A.evaluate((to) => __bench.floor({ kind: 'tap', id: 'tap-b-' + Date.now(), to, from: __bench.myId(), name: 'A' }), bId);
+  await B.waitForTimeout(1500);
+  await B.keyboard.press('KeyT');
+  await B.waitForTimeout(2000);
   await A.evaluate((id) => __bench.invite(id), bId);
   await B.waitForFunction(() => !document.getElementById('tapAsk').hidden, null, { timeout: 10000 });
   await B.evaluate(() => document.getElementById('tapYes').click());
@@ -63,9 +68,13 @@ try {
   check('C render marker + lines', aC.some((a) => a.marker && a.lines >= 1), aC[0] && `marker=${aC[0].marker} lines=${aC[0].lines}`);
   check('B cũng có anchor (được mời)', aB.some((a) => a.members.includes(wid(aId))), `B:${aB.length}`);
 
-  // C vào FPV rồi vỗ vai B đang trong convo -> B được hỏi -> nhận -> C vào (3 người, 1 anchor)
+  // C vào FPV + teleport gần nhóm rồi vỗ vai B đang trong convo -> B được hỏi -> nhận -> C vào
   await C.evaluate(() => document.getElementById('vwalk').click());
   await C.waitForTimeout(2500);
+  await A.evaluate((to) => __bench.floor({ kind: 'tap', id: 'tap-c-' + Date.now(), to, from: __bench.myId(), name: 'A' }), cId);
+  await C.waitForTimeout(1500);
+  await C.keyboard.press('KeyT');
+  await C.waitForTimeout(2000);
   await C.evaluate((id) => __bench.invite(id), bId);
   await B.waitForFunction(() => !document.getElementById('tapAsk').hidden, null, { timeout: 15000 })
     .catch(async () => {

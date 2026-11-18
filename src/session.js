@@ -2893,13 +2893,29 @@ function findSpawn(sx, sz, island) {
   }
   return { x, z };
 }
+// spawn corridor: giữa view biển (z≈-6.65) và bàn làm việc (z≈0) — trải đều trục x, nhìn ra biển
+const WALK_SPAWNS = [
+  { x: -8, z: -4 }, { x: -5, z: -4 }, { x: -2, z: -4 }, { x: 1, z: -4 },
+  { x: 4, z: -4 }, { x: 7, z: -4 }, { x: -6.5, z: -2.2 }, { x: -3.5, z: -2.2 },
+  { x: -0.5, z: -2.2 }, { x: 2.5, z: -2.2 }, { x: 5.5, z: -2.2 },
+];
+function walkSpawn() {
+  let h = 0; for (const c of myId) h = (h * 31 + c.charCodeAt(0)) | 0;
+  for (let i = 0; i < WALK_SPAWNS.length; i++) {
+    const s = WALK_SPAWNS[Math.abs(h + i) % WALK_SPAWNS.length];
+    const taken = [...people.values()].some((r) => r.walk && Math.hypot(r.wx - s.x, r.wz - s.z) < 1.2);
+    if (!taken && !hitWall(s.x, s.z)) return s;
+  }
+  return { x: 0, z: -3, yaw: 0 };
+}
 function enterFpv(sx, sz, syaw) {
   if (fpv) return;
   if (!$('maker').hidden) { toast('Chọn hình đã rồi đi dạo nhé.'); return; }
   if (myIsland > 0) leaveDesk();
   ensureWalkPeer();
   fpv = true;
-  fpvPos.set(sx ?? 0, 0, sz ?? 4); fpvYaw = syaw ?? Math.PI; fpvPitch = 0;
+  const sp = (sx != null && sz != null) ? { x: sx, z: sz, yaw: syaw ?? 0 } : walkSpawn();
+  fpvPos.set(sp.x, 0, sp.z); fpvYaw = sp.yaw ?? 0; fpvPitch = 0;
   $('crosshair').hidden = false;
   $('vwalk').setAttribute('aria-pressed', 'true');
   buttons.forEach(b => { if (b.id !== 'vwalk') b.setAttribute('aria-pressed', 'false'); });

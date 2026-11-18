@@ -74,8 +74,8 @@ try {
   const walking = await rowOn(A, bId);
   check('A thấy B đi dạo (kind=walk, body hiện)', walking && walking.kind === 'walk' && walking.walk === 1 && walking.body && walking.visible, walking && `(${walking.wx?.toFixed(1)},${walking.wz?.toFixed(1)})`);
 
-  // --- yaw: B spawn yaw mặc định PI (nhìn +Z) -> wyaw phải ≈ 0 (model nhìn +Z) ---
-  check('yaw đúng chiều (wyaw≈0, không quay lưng)', walking && Math.abs(wrapPi(walking.wyaw)) < 0.3, walking && `wyaw=${walking.wyaw.toFixed(2)}`);
+  // --- yaw: B spawn yaw mặc định 0 (nhìn -Z ra biển) -> wyaw phải ≈ π (model nhìn -Z) ---
+  check('yaw đúng chiều (wyaw≈π, không quay lưng)', walking && Math.abs(wrapPi(walking.wyaw - Math.PI)) < 0.3, walking && `wyaw=${walking.wyaw.toFixed(2)}`);
 
   // --- B đi tới -> A thấy vị trí mới + body theo kịp ---
   await B.keyboard.down('KeyW');
@@ -102,14 +102,22 @@ try {
   check('B bấm T teleport tới gần A (vẫn trong FPV)', teleported && teleported.walk === 1 && dTele < 3.5, teleported && `d=${dTele?.toFixed(2)}m`);
 
   // --- convo mesh: A,B,C cùng đi dạo GẦN NHAU; A mời B rồi mời C -> 3 người phải thấy nhau ---
-  // enterFpv() spawn về (0,4) — B đang đứng cạnh ghế của A nên phải vào lại FPV để về chung spawn,
-  // nếu không B "đi quá xa" khỏi nhóm và bị convoFar tự đá sau ~5s (đúng thiết kế).
+  // spawn corridor trải ra — teleport B,C về gần A trước khi convo để convoFar không kick.
   await A.evaluate(() => document.getElementById('vwalk').click());
   await C.evaluate(() => document.getElementById('vwalk').click());
   await B.evaluate(() => document.getElementById('vhome').click());
   await B.waitForTimeout(700);
   await B.evaluate(() => document.getElementById('vwalk').click());
   await B.waitForTimeout(2500);
+  // teleport B,C về gần A (convo cần <3.9m)
+  await A.evaluate((to) => __bench.floor({ kind: 'tap', id: 'tap-b-' + Date.now(), to, from: __bench.myId(), name: 'A' }), bId);
+  await B.waitForTimeout(1500);
+  await B.keyboard.press('KeyT');
+  await B.waitForTimeout(2000);
+  await A.evaluate((to) => __bench.floor({ kind: 'tap', id: 'tap-c-' + Date.now(), to, from: __bench.myId(), name: 'A' }), cId);
+  await C.waitForTimeout(1500);
+  await C.keyboard.press('KeyT');
+  await C.waitForTimeout(2000);
   const wid = (id) => 'furuoff-w-' + id;
   const convoOf = (p) => p.evaluate(() => __bench.convo());
   await A.evaluate((id) => __bench.invite(id), bId);
