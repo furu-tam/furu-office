@@ -3054,9 +3054,10 @@ function ensureVoiceThen(fn) {
     .then((s) => { localStream = s; micOn = true; fn(); })
     .catch(() => toast('Không lấy được mic'));
 }
-function joinConvo(wid, members) {
+function joinConvo(wid, members, aid) {
   if (pairPeer) exitPair();
   ensureVoiceThen(() => {
+    if (aid && aid !== myAnchor) { myAnchor = aid; }   // vào convo đã có anchor — dùng anchor sẵn có
     convoSet.add(wid);
     dialWalk(wid);
     members.forEach((m) => { if (m !== myWalkId() && !convoSet.has(m)) { convoSet.add(m); setTimeout(() => dialWalk(m), 700); } });
@@ -3090,22 +3091,25 @@ function leaveConvo(silent) {
 function handleWalkData(wid, d) {
   if (!d || !d.kind) return;
   if (d.kind === 'invite') {
-    if (dnd || pairPeer || convoSet.size) {
+    if (dnd || pairPeer) {
       const c = wconns.get(wid);
-      try { if (c && c.open) c.send({ kind: 'invite-busy', reason: dnd ? 'dnd' : pairPeer ? 'pair' : 'convo' }); } catch (e) {}
+      try { if (c && c.open) c.send({ kind: 'invite-busy', reason: dnd ? 'dnd' : 'pair' }); } catch (e) {}
       return;
     }
     if (tapIn) clearTimeout(tapIn.timer);
     tapIn = { walkId: wid, name: d.name || 'Ai đó' };
     chimeSound();
     pushNotif('invite', tapIn.name, { wid });
-    $('tapAskText').textContent = tapIn.name + ' vỗ vai bạn — nói chuyện?';
+    // đang trong convo → member được hỏi để cho người mới vào (không auto-busy)
+    $('tapAskText').textContent = convoSet.size
+      ? tapIn.name + ' muốn vào cuộc trò chuyện — cho vào?'
+      : tapIn.name + ' vỗ vai bạn — nói chuyện?';
     $('tapAsk').hidden = false;
     tapIn.timer = setTimeout(() => { $('tapAsk').hidden = true; tapIn = null; }, 15000);
   } else if (d.kind === 'invite-accept') {
-    joinConvo(wid, d.members || []);
+    joinConvo(wid, d.members || [], d.anchor);
   } else if (d.kind === 'invite-busy') {
-    toast(d.reason === 'dnd' ? 'Người đó đang bật Không làm phiền' : d.reason === 'convo' ? 'Người đó đang trong cuộc trò chuyện khác' : 'Người đó đang nói riêng');
+    toast(d.reason === 'dnd' ? 'Người đó đang bật Không làm phiền' : d.reason === 'convo' ? 'Người đó đang trong cuộc trò chuyện khác' : d.reason === 'pair' ? 'Người đó đang nói riêng' : 'Người đó từ chối');
   } else if (d.kind === 'convo-join') {
     if (convoSet.size) {
       convoSet.add(d.id);
@@ -3177,6 +3181,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && $('bellPanel') && !$('bellPanel').hidden) { $('bellPanel').hidden = true; return; }
   if (e.code === 'KeyE' && fpv && sitNear) { e.preventDefault(); sitFromWalk(); return; }
   if (e.code === 'KeyG' && (fpv || myIsland > 0)) { e.preventDefault(); callAgent(); return; }
+  if (e.code === 'KeyR' && convoSet.size) { e.preventDefault(); leaveConvo(); return; }
   if (e.code === 'KeyT' && !$('tapNotice').hidden) { e.preventDefault(); goToTapper(); return; }
   if (e.code === 'KeyY' || e.code === 'Enter') {
     if (!$('tapAsk').hidden) { e.preventDefault(); $('tapYes').click(); }
@@ -3248,11 +3253,12 @@ $('tapYes').addEventListener('click', () => {
   if (t.anchorJoin) { t.admit(); t.ack(); return; }   // xin vào anchor — member nào bấm trước cho vào
   if (pairPeer) exitPair();
   ensureWalkPeer().then(() => ensureVoiceThen(() => {
-    const conn = wconns.get(t.walkId);
-    try { if (conn && conn.open) conn.send({ kind: 'invite-accept', members: [...convoSet, myWalkId()] }); } catch (e) {}
-    wconns.forEach((c, w) => { try { if (convoSet.has(w) && c.open) c.send({ kind: 'convo-join', id: t.walkId }); } catch (e) {} });
-    pendingWalk.add(t.walkId);
     convoSet.add(t.walkId);
+    pendingWalk.add(t.walkId);
+    ensureAnchor();
+    const conn = wconns.get(t.walkId);
+    try { if (conn && conn.open) conn.send({ kind: 'invite-accept', members: [...convoSet], anchor: myAnchor }); } catch (e) {}
+    wconns.forEach((c, w) => { try { if (convoSet.has(w) && w !== t.walkId && c.open) c.send({ kind: 'convo-join', id: t.walkId }); } catch (e) {} });
     $('btnConvoEnd').hidden = false;
     applyGains();
   }));
@@ -3328,12 +3334,18 @@ hooks.debug = () => ({
   })),
   floor: { host: floorHost, link: floorLink ? floorLink.open : null, conns: floorConns.length, people: people.size },
   walk: { peer: walkPeer ? walkPeer.id : null, convo: convoSet.size, conns: wconns.size, streams: walkStreams.size, calls: walkCalls.size },
+  anchors: [...anchors.values()].map((a) => ({ id: a.id, x: +a.x.toFixed(2), z: +a.z.toFixed(2), members: a.members, marker: !!a.marker, lines: a.lines.size })),
+  myAnchor,
   log: dbgLog.slice(-24),
 });
+hooks.anchors = () => [...anchors.values()].map((a) => ({ id: a.id, x: a.x, z: a.z, members: a.members.slice(), marker: !!a.marker, lines: a.lines.size }));
 // ---------- anchor (điểm neo) + sợi chỉ đỏ + panel người trong tầm nghe ----------
 const anchorPickers = [];
-const anchorMat = new THREE.MeshBasicMaterial({ color: 0xff5560, transparent: true, opacity: 0.9 });
-const threadMat = new THREE.LineBasicMaterial({ color: 0xff4d55, transparent: true, opacity: 0.65 });
+const anchorMat = new THREE.MeshBasicMaterial({ color: 0xff5560, transparent: true, opacity: 0.95 });
+const threadGeo = new THREE.CylinderGeometry(0.014, 0.014, 1, 6, 1, true);   // LineBasicMaterial linewidth không hoạt động → cylinder
+const threadMat = new THREE.MeshBasicMaterial({ color: 0xff4d55, transparent: true, opacity: 0.8 });
+const UP = new THREE.Vector3(0, 1, 0);
+const _dir = new THREE.Vector3();
 const convoPanel = document.createElement('div');
 convoPanel.id = 'convoPanel';
 convoPanel.hidden = true;
@@ -3372,12 +3384,14 @@ function anchorBroadcast() {
 function ensureAnchor() {
   const me = myPos();
   if (!me) return;
-  if (!myAnchor) {
-    myAnchor = 'a-' + rid(6);
-    anchors.set(myAnchor, { id: myAnchor, x: me.x, z: me.z, members: [], left: new Set(), marker: null, lines: new Map() });
+  if (!myAnchor) myAnchor = 'a-' + rid(6);
+  let A = anchors.get(myAnchor);
+  if (!A) {
+    A = { id: myAnchor, x: me.x, z: me.z, members: [], left: new Set(), marker: null, lines: new Map() };
+    anchors.set(myAnchor, A);
   }
-  const A = anchors.get(myAnchor);
-  A.members = [myWalkId(), ...convoSet];
+  A.members = [...new Set([...A.members, myWalkId(), ...convoSet])];
+  A.left.delete(myWalkId());
   if (!A.marker) renderAnchor(A);
   anchorBroadcast();
   updateConvoPanel();
@@ -3389,7 +3403,7 @@ function leaveAnchor() {
   if (A) {
     A.members = A.members.filter((m) => m !== wid);
     A.left.add(wid);
-    if (A.members.length < 2) floorSend({ kind: 'anchor', anchor: { id: A.id }, gone: true });
+    if (A.members.length < 2) { floorSend({ kind: 'anchor', anchor: { id: A.id }, gone: true }); dropAnchor(A.id); }
     else anchorBroadcast();
   }
   myAnchor = null;
@@ -3422,32 +3436,45 @@ function applyAnchor(a) {
   if (!A.marker) renderAnchor(A);
 }
 function renderAnchor(A) {
-  A.marker = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.035, 8, 28), anchorMat);
-  A.marker.rotation.x = Math.PI / 2;
-  A.marker.userData.anchorId = A.id;
-  scene.add(A.marker);
-  anchorPickers.push(A.marker);
-  A.marker.position.set(A.x, 1.85, A.z);
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.05, 8, 28), anchorMat);
+  ring.rotation.x = Math.PI / 2;
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 10), anchorMat);
+  g.add(ring, core);
+  g.userData.anchorId = A.id;
+  scene.add(g);
+  A.marker = g;
+  anchorPickers.push(g);
+  g.position.set(A.x, 1.85, A.z);
 }
 function tickAnchors() {
+  const bob = Math.sin(performance.now() * 0.002) * 0.05;
   anchors.forEach((A) => {
     if (!A.marker) return;
-    A.marker.position.set(A.x, 1.85 + Math.sin(performance.now() * 0.002) * 0.05, A.z);
+    // điểm neo bám theo centroid member — nhóm đi đâu neo theo đó (mọi client tự tính
+    // từ presence nên khớp nhau, khỏi đồng bộ thêm)
+    let cx = 0, cz = 0, cn = 0;
+    A.members.forEach((wid) => {
+      const row = rowByWalk(wid), p = row && posOf(row);
+      if (p) { cx += p.x; cz += p.z; cn++; }
+    });
+    if (cn) { A.x = cx / cn; A.z = cz / cn; }
+    A.marker.position.set(A.x, 1.85 + bob, A.z);
+    // dọn sợi chỉ của member đã rời (rejoin wid mới / thoát convo / crash)
+    A.lines.forEach((line, wid) => {
+      if (!A.members.includes(wid)) { scene.remove(line); A.lines.delete(wid); }
+    });
     A.members.forEach((wid) => {
       const row = rowByWalk(wid), p = row && posOf(row);
       let line = A.lines.get(wid);
       if (!p) { if (line) { scene.remove(line); A.lines.delete(wid); } return; }
-      if (!line) {
-        const g = new THREE.BufferGeometry();
-        g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-        line = new THREE.Line(g, threadMat);
-        scene.add(line);
-        A.lines.set(wid, line);
-      }
-      const pos = line.geometry.attributes.position;
-      pos.setXYZ(0, A.x, 1.85, A.z);
-      pos.setXYZ(1, p.x, (row.walk ? 1.75 : 1.35) + (p.y || 0), p.z);
-      pos.needsUpdate = true;
+      if (!line) { line = new THREE.Mesh(threadGeo, threadMat); scene.add(line); A.lines.set(wid, line); }
+      const hy = (row.walk ? 1.75 : 1.35) + (p.y || 0);
+      const dx = p.x - A.x, dy = hy - 1.85, dz = p.z - A.z;
+      const len = Math.hypot(dx, dy, dz) || 0.001;
+      line.position.set(A.x + dx / 2, 1.85 + dy / 2, A.z + dz / 2);
+      line.scale.set(1, len, 1);
+      line.quaternion.setFromUnitVectors(UP, _dir.set(dx / len, dy / len, dz / len));
     });
   });
 }
@@ -3510,7 +3537,7 @@ function syncAnchorOnLeave(wid) {
   if (A.members.includes(wid)) {
     A.members = A.members.filter((m) => m !== wid);
     A.left.add(wid);
-    if (A.members.length < 2) { floorSend({ kind: 'anchor', anchor: { id: A.id }, gone: true }); myAnchor = null; }
+    if (A.members.length < 2) { floorSend({ kind: 'anchor', anchor: { id: A.id }, gone: true }); dropAnchor(A.id); myAnchor = null; }
     else anchorBroadcast();
   }
 }
