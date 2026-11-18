@@ -745,7 +745,7 @@ function enterDesk(index, slot) {
   $('btnMic').hidden = quiet;
   $('btnCam').hidden = quiet;
   $('btnChat').hidden = false;
-  $('btnLeave').textContent = quiet ? 'Rời chỗ' : 'Rời bàn';
+  $('btnLeave').textContent = (quiet ? 'Rời chỗ' : 'Rời bàn') + ' (Q)';
   $('btnCoffee').hidden = !quiet;
   $('btnCoffee').disabled = false;
   $('btnCoffee').textContent = 'Gọi cà phê';
@@ -817,7 +817,7 @@ function leaveDesk(silent) {
   $('btnMic').hidden = false;
   $('btnCam').hidden = false;
   $('btnChat').hidden = false;
-  $('btnLeave').textContent = 'Rời bàn';
+  $('btnLeave').textContent = 'Rời bàn (Q)';
   closeTvFull();
   $('btnTalk').hidden = false;
   $('btnHear').hidden = true;
@@ -2996,10 +2996,19 @@ document.addEventListener('visibilitychange', () => {
   if (fpv && document.hidden) { fpvSentAt = 0; sendWalkPos(); }
 });
 // --- walk peer: kênh mời nói chuyện + convo ---
+function walkPeerReady() {
+  return new Promise((res) => {
+    if (!walkPeer || walkPeer.destroyed) return res(false);
+    if (walkPeer.open) return res(true);
+    walkPeer.once('open', () => res(true));
+    setTimeout(() => res(!!(walkPeer && walkPeer.open)), 8000);
+  });
+}
 function ensureWalkPeer() {
-  if (walkPeer) return Promise.resolve();
+  if (walkPeer) return walkPeerReady();
   return loadPeerLib().then((ok) => ok ? iceServers() : null).then((ice) => {
-    if (!ice || walkPeer) return;
+    if (!ice) return false;
+    if (walkPeer) return walkPeerReady();
     walkPeer = new Peer(myWalkId(), peerOpts(ice));
     walkPeer.on('connection', (conn) => {
       wconns.set(conn.peer, conn);
@@ -3017,6 +3026,7 @@ function ensureWalkPeer() {
       call.on('close', () => dropWalkPeer(call.peer));
     });
     walkPeer.on('error', (e) => { if (e && e.type === 'peer-unavailable') toast('Không kết nối được'); });
+    return walkPeerReady();
   });
 }
 function addWalkStream(wid, stream) {
@@ -3140,8 +3150,8 @@ function sendInvite(row) {
   if (!row || row.id === myId) return;
   if (!row.walkId) { toast((row.name || 'Người đó') + ' chưa hỗ trợ nói chuyện khi đi dạo.'); return; }
   if (convoSet.size && convoSet.has(row.walkId)) return;
-  ensureWalkPeer().then(() => {
-    if (!walkPeer) { toast('Không nối được kênh nói chuyện.'); return; }
+  ensureWalkPeer().then((ok) => {
+    if (!ok || !walkPeer) { toast('Không nối được kênh nói chuyện.'); return; }
     let conn = wconns.get(row.walkId);
     if (!conn || !conn.open) {
       conn = walkPeer.connect(row.walkId, { reliable: true });
@@ -3178,10 +3188,16 @@ document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const tag = e.target && e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;   // Cmd+Shift+R v.v. là phím tắt browser — bỏ qua
   if (e.code === 'Escape' && $('bellPanel') && !$('bellPanel').hidden) { $('bellPanel').hidden = true; return; }
   if (e.code === 'KeyE' && fpv && sitNear) { e.preventDefault(); sitFromWalk(); return; }
   if (e.code === 'KeyG' && (fpv || myIsland > 0)) { e.preventDefault(); callAgent(); return; }
-  if (e.code === 'KeyR' && convoSet.size) { e.preventDefault(); leaveConvo(); return; }
+  if (e.code === 'KeyQ') {
+    e.preventDefault();
+    if (convoSet.size) leaveConvo();
+    else if (myIsland > 0) $('btnLeave').click();
+    return;
+  }
   if (e.code === 'KeyT' && !$('tapNotice').hidden) { e.preventDefault(); goToTapper(); return; }
   if (e.code === 'KeyY' || e.code === 'Enter') {
     if (!$('tapAsk').hidden) { e.preventDefault(); $('tapYes').click(); }
@@ -3234,7 +3250,7 @@ setInterval(() => {
   }
   tapTarget = best;
   if (tapTarget) tapTagEl.textContent = 'Vỗ vai ' + tapTarget.name;
-  if (convoSet.size) {
+  if (convoSet.size && fpv) {
     const me = myPos();
     const near = me && [...convoSet].some((wid) => {
       const r = rowByWalk(wid), p = r && posOf(r);
@@ -3252,7 +3268,9 @@ $('tapYes').addEventListener('click', () => {
   if (!t) return;
   if (t.anchorJoin) { t.admit(); t.ack(); return; }   // xin vào anchor — member nào bấm trước cho vào
   if (pairPeer) exitPair();
-  ensureWalkPeer().then(() => ensureVoiceThen(() => {
+  ensureWalkPeer().then((ok) => {
+    if (!ok) { toast('Không nối được kênh nói chuyện.'); return; }
+    ensureVoiceThen(() => {
     convoSet.add(t.walkId);
     pendingWalk.add(t.walkId);
     ensureAnchor();
@@ -3261,7 +3279,8 @@ $('tapYes').addEventListener('click', () => {
     wconns.forEach((c, w) => { try { if (convoSet.has(w) && w !== t.walkId && c.open) c.send({ kind: 'convo-join', id: t.walkId }); } catch (e) {} });
     $('btnConvoEnd').hidden = false;
     applyGains();
-  }));
+    });
+  });
 });
 $('tapNo').addEventListener('click', () => {
   $('tapAsk').hidden = true;
@@ -3401,10 +3420,12 @@ function anchorBroadcast() {
   const A = anchors.get(myAnchor);
   if (A) floorSend({ kind: 'anchor', anchor: { id: A.id, x: A.x, z: A.z }, members: A.members.slice(), left: [...A.left] });
 }
+// id anchor suy ra từ member nhỏ nhất — nhiều client rebuild cùng lúc vẫn ra cùng id (converge)
+function anchorIdFor() { return 'a-' + [myWalkId(), ...convoSet].sort()[0]; }
 function ensureAnchor() {
   const me = myPos();
   if (!me) return;
-  if (!myAnchor) myAnchor = 'a-' + rid(6);
+  if (!myAnchor) myAnchor = anchorIdFor();
   let A = anchors.get(myAnchor);
   if (!A) {
     A = { id: myAnchor, x: me.x, z: me.z, members: [], left: new Set(), marker: null, lines: new Map() };
@@ -3439,20 +3460,35 @@ function dropAnchor(id) {
 }
 function applyAnchor(a) {
   if (!a || !a.id) return;
-  if (a.gone) { dropAnchor(a.id); return; }
+  // anchor chết — nhưng mình còn đang trong convo → rebuild ngay (chết nhầm do list lệch)
+  if (a.gone) { dropAnchor(a.id); if (convoSet.size) ensureAnchor(); return; }
+  // một người chỉ thuộc 1 convo — anchor khác chứa member trùng là bản forked-id cũ → dọn;
+  // nhưng member trùng vẫn nằm trong convo của mình thì list bên kia mới là stale → bỏ qua
+  if (Array.isArray(a.members) && a.members.length) {
+    a.members.forEach((m) => {
+      if (m === myWalkId() || convoSet.has(m)) return;
+      anchors.forEach((A2) => { if (A2.id !== a.id && A2.members.includes(m)) dropAnchor(A2.id); });
+    });
+  }
   let A = anchors.get(a.id);
   if (!A) { A = { id: a.id, x: a.x, z: a.z, members: [], left: new Set(), marker: null, lines: new Map() }; anchors.set(a.id, A); }
   A.x = a.x; A.z = a.z;
   if (Array.isArray(a.members)) {
     const had = new Set(A.members);
     A.members = a.members;
-    // member mới vào convo của mình → thêm vào convoSet nếu mình đang trong anchor này
-    if (myAnchor === a.id) a.members.forEach((m) => { if (m !== myWalkId() && !had.has(m) && convoSet.size) { convoSet.add(m); pendingWalk.add(m); updateConvoPanel(); } });
+    // member mới trong broadcast → chỉ authorize call sẵn (pendingWalk);
+    // convoSet chỉ đổi qua convo-join/call thật — broadcast stale không được re-add người đã rời.
+    if (myAnchor === a.id) a.members.forEach((m) => { if (m !== myWalkId() && !had.has(m) && !A.left.has(m) && convoSet.size) pendingWalk.add(m); });
+    a.members.forEach((m) => A.left.delete(m));   // đã vào lại thì xóa khỏi danh sách rời
   }
   if (Array.isArray(a.left)) a.left.forEach((w) => A.left.add(w));
-  // mình nằm trong members và đang có convo → anchor này là của mình (bên được mời)
-  if (A.members.includes(myWalkId()) && (convoSet.size || pendingWalk.size)) myAnchor = a.id;
-  if (A.members.length < 2) { dropAnchor(a.id); return; }
+  // mình nằm trong members và đang có convo → anchor này là của mình (bên được mời);
+  // chuyển anchor thì dọn anchor cũ của mình — mình chỉ thuộc 1 convo
+  if (A.members.includes(myWalkId()) && (convoSet.size || pendingWalk.size)) {
+    if (myAnchor && myAnchor !== a.id) dropAnchor(myAnchor);
+    myAnchor = a.id;
+  }
+  if (A.members.length < 2) { dropAnchor(a.id); if (convoSet.size) ensureAnchor(); return; }
   if (!A.marker) renderAnchor(A);
 }
 function renderAnchor(A) {
@@ -3562,13 +3598,17 @@ function syncAnchorOnJoin(wid) {
 }
 function syncAnchorOnLeave(wid) {
   const A = anchors.get(myAnchor);
-  if (!A) return;
-  if (A.members.includes(wid)) {
-    A.members = A.members.filter((m) => m !== wid);
-    A.left.add(wid);
-    if (A.members.length < 2) { floorSend({ kind: 'anchor', anchor: { id: A.id }, gone: true }); dropAnchor(A.id); myAnchor = null; }
-    else anchorBroadcast();
-  }
+  if (!A || !A.members.includes(wid)) return;
+  A.members = A.members.filter((m) => m !== wid);
+  A.left.add(wid);
+  // ground truth là convoSet local, không phải members list (có thể lệch do race) —
+  // mình còn nối ≥1 người thì anchor sống tiếp; chỉ chết khi thật sự còn <2
+  A.members = [...new Set([...A.members, myWalkId(), ...convoSet].filter((m) => m !== wid))];
+  const remaining = [...convoSet].filter((m) => m !== wid).length;   // handler gọi trước khi convoSet xóa wid
+  if (A.members.length < 2 && remaining < 1) {
+    floorSend({ kind: 'anchor', anchor: { id: A.id }, gone: true });
+    dropAnchor(A.id); myAnchor = null;
+  } else anchorBroadcast();
 }
 hooks.dbgEv = dbgEv;
 hooks.dbgLog = () => dbgLog.slice();

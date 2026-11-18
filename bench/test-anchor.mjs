@@ -23,6 +23,7 @@ await ctx.addInitScript((l) => { localStorage.setItem('furu-office-look', JSON.s
 const A = await ctx.newPage(), B = await ctx.newPage(), C = await ctx.newPage();
 for (const [tag, p] of [['A', A], ['B', B], ['C', C]]) {
   p.on('pageerror', (e) => console.log(`[${tag} pageerror]`, e.message));
+  p.on('console', (m) => { if (m.text().includes('[walk]')) console.log(`[${tag}]`, m.text()); });
 }
 
 try {
@@ -36,6 +37,7 @@ try {
   await floorOk(A); await floorOk(B); await floorOk(C);
   const aId = await A.evaluate(() => __bench.myId());
   const bId = await B.evaluate(() => __bench.myId());
+  const cId = await C.evaluate(() => __bench.myId());
 
   // A,B đi dạo -> A mời B -> B nhận -> convo
   await A.evaluate(() => document.getElementById('vwalk').click());
@@ -61,23 +63,53 @@ try {
   check('C render marker + lines', aC.some((a) => a.marker && a.lines >= 1), aC[0] && `marker=${aC[0].marker} lines=${aC[0].lines}`);
   check('B cũng có anchor (được mời)', aB.some((a) => a.members.includes(wid(aId))), `B:${aB.length}`);
 
-  // anchor bám theo nhóm: A đi xa -> vị trí anchor đổi theo
-  const before = aC[0] && { x: aC[0].x, z: aC[0].z };
+  // C vào FPV rồi vỗ vai B đang trong convo -> B được hỏi -> nhận -> C vào (3 người, 1 anchor)
+  await C.evaluate(() => document.getElementById('vwalk').click());
+  await C.waitForTimeout(2500);
+  await C.evaluate((id) => __bench.invite(id), bId);
+  await B.waitForFunction(() => !document.getElementById('tapAsk').hidden, null, { timeout: 15000 })
+    .catch(async () => {
+      console.log('B debug:', JSON.stringify(await B.evaluate(async () => (await import('/src/world.js')).hooks.debug().walk)));
+      console.log('C debug:', JSON.stringify(await C.evaluate(async () => (await import('/src/world.js')).hooks.debug().walk)));
+      throw new Error('tapAsk không hiện');
+    });
+  await B.evaluate(() => document.getElementById('tapYes').click());
+  await C.waitForTimeout(3500);
+  const aC4 = await anchorsOf(C);
+  check('C join convo qua vỗ vai member đang nói', aC4.some((a) => a.members.length === 3 && a.members.includes(wid(cId))), `C:${JSON.stringify(aC4)}`);
+
+  // anchor bám theo nhóm: A đi ngắn -> vị trí anchor (centroid) đổi theo, convo vẫn sống
+  const before = aC4[0] && { x: aC4[0].x, z: aC4[0].z };
   await A.keyboard.down('KeyW');
-  await A.waitForTimeout(2000);
+  await A.waitForTimeout(900);
   await A.keyboard.up('KeyW');
-  await A.waitForTimeout(2000);
+  await A.waitForTimeout(1500);
   const aC2 = await anchorsOf(C);
   check('anchor di chuyển theo nhóm', aC2[0] && before && (Math.abs(aC2[0].x - before.x) > 0.3 || Math.abs(aC2[0].z - before.z) > 0.3),
     before && aC2[0] && `(${before.x},${before.z}) -> (${aC2[0].x},${aC2[0].z})`);
 
-  // B rời convo -> line của B mất (không còn chỉ thừa), anchor chết khi <2
+  const dbg = (p) => p.evaluate(async () => {
+    const d = (await import('/src/world.js')).hooks.debug();
+    return { convo: d.walk.convo, conns: d.walk.conns, calls: d.walk.calls, myAnchor: d.myAnchor };
+  });
+  console.log('trước khi C rời:', JSON.stringify(await dbg(A)), JSON.stringify(await dbg(B)), JSON.stringify(await dbg(C)));
+
+  // C rời -> anchor PHẢI sống tiếp với 2 member còn lại (bug: anchor chết nhầm khi members list lệch)
+  await C.evaluate(() => document.getElementById('btnConvoEnd').click());
+  await A.waitForTimeout(3500);
+  console.log('sau khi C rời:', JSON.stringify(await dbg(A)), JSON.stringify(await dbg(B)), JSON.stringify(await dbg(C)));
+  const [aA5, aB5, aC5] = await Promise.all([anchorsOf(A), anchorsOf(B), anchorsOf(C)]);
+  check('anchor sống sau khi C rời (A)', aA5.some((a) => a.members.length === 2 && a.members.includes(wid(aId)) && a.members.includes(wid(bId))), `A:${JSON.stringify(aA5)}`);
+  check('anchor sống sau khi C rời (B)', aB5.some((a) => a.members.length === 2), `B:${JSON.stringify(aB5)}`);
+  check('C rời convo nhưng vẫn thấy anchor (observer)', aC5.some((a) => a.members.length === 2 && !a.members.includes(wid(cId))), `C:${JSON.stringify(aC5)}`);
+
+  // B rời nốt -> anchor chết khi <2
   await B.evaluate(() => document.getElementById('btnConvoEnd').click());
-  await B.waitForTimeout(2500);
-  const aC3 = await anchorsOf(C);
-  const aB2 = await anchorsOf(B);
-  check('anchor chết khi còn 1 member (C)', !aC3.length, `C:${JSON.stringify(aC3)}`);
-  check('B không còn thấy anchor sau khi rời', !aB2.length, `B:${JSON.stringify(aB2)}`);
+  await A.waitForTimeout(3000);
+  console.log('sau khi B rời:', JSON.stringify(await dbg(A)), JSON.stringify(await dbg(B)));
+  const [aA6, aB6] = await Promise.all([anchorsOf(A), anchorsOf(B)]);
+  check('anchor chết khi còn 1 member (A)', !aA6.length, `A:${JSON.stringify(aA6)}`);
+  check('B không còn thấy anchor sau khi rời', !aB6.length, `B:${JSON.stringify(aB6)}`);
 } finally {
   await browser.close();
 }
