@@ -2851,7 +2851,11 @@ document.addEventListener('mousemove', (e) => {
   fpvPitch = Math.max(-1.45, Math.min(1.45, fpvPitch - e.movementY * 0.0022));
 });
 const KEYMAP = { KeyW: [0, -1], KeyS: [0, 1], KeyA: [-1, 0], KeyD: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
-document.addEventListener('keydown', (e) => { if (fpv && KEYMAP[e.code]) { fpvKeys.add(e.code); e.preventDefault(); } });
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) { fpvKeys.clear(); return; }
+  if (fpv && KEYMAP[e.code]) { fpvKeys.add(e.code); e.preventDefault(); }
+});
 document.addEventListener('keyup', (e) => fpvKeys.delete(e.code));
 export function tickSession(dt) {
   if (fpv) fpvTick(dt);
