@@ -2963,7 +2963,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => fpvKeys.delete(e.code));
 export function tickSession(dt) {
   if (fpv) fpvTick(dt);
-  tickAnchors();
+  tickAnchors(dt);
 }
 function fpvTick(dt) {
   let dx = 0, dz = 0;
@@ -3341,11 +3341,31 @@ hooks.debug = () => ({
 hooks.anchors = () => [...anchors.values()].map((a) => ({ id: a.id, x: a.x, z: a.z, members: a.members.slice(), marker: !!a.marker, lines: a.lines.size }));
 // ---------- anchor (điểm neo) + sợi chỉ đỏ + panel người trong tầm nghe ----------
 const anchorPickers = [];
-const anchorMat = new THREE.MeshBasicMaterial({ color: 0xff5560, transparent: true, opacity: 0.95 });
-const threadGeo = new THREE.CylinderGeometry(0.014, 0.014, 1, 6, 1, true);   // LineBasicMaterial linewidth không hoạt động → cylinder
+const ANCHOR_Y = 2.6;            // điểm neo treo cao trên đầu
+const THREAD_RISE = 1.0;         // chỉ đi thẳng lên khỏi đỉnh đầu bao nhiêu trước khi cong về neo
+const anchorTex = (() => {       // icon bong bóng chat vẽ bằng canvas
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = '#ff5560';
+  const bx = 14, by = 26, bw = 100, bh = 62, r = 26;
+  x.beginPath();
+  x.moveTo(bx + r, by);
+  x.arcTo(bx + bw, by, bx + bw, by + bh, r);
+  x.arcTo(bx + bw, by + bh, bx, by + bh, r);
+  x.arcTo(bx, by + bh, bx, by, r);
+  x.arcTo(bx, by, bx + bw, by, r);
+  x.closePath();
+  x.moveTo(46, by + bh - 4);
+  x.lineTo(38, by + bh + 22);
+  x.lineTo(68, by + bh - 4);
+  x.fill();
+  x.fillStyle = '#fff';
+  [44, 64, 84].forEach((cx) => { x.beginPath(); x.arc(cx, by + bh / 2, 7, 0, Math.PI * 2); x.fill(); });
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
 const threadMat = new THREE.MeshBasicMaterial({ color: 0xff4d55, transparent: true, opacity: 0.8 });
-const UP = new THREE.Vector3(0, 1, 0);
-const _dir = new THREE.Vector3();
 const convoPanel = document.createElement('div');
 convoPanel.id = 'convoPanel';
 convoPanel.hidden = true;
@@ -3412,7 +3432,7 @@ function dropAnchor(id) {
   const A = anchors.get(id);
   if (!A) return;
   if (A.marker) { scene.remove(A.marker); const i = anchorPickers.indexOf(A.marker); if (i >= 0) anchorPickers.splice(i, 1); }
-  A.lines.forEach((l) => scene.remove(l));
+  A.lines.forEach((l) => { scene.remove(l); if (l.geometry) l.geometry.dispose(); });
   A.lines.clear();
   anchors.delete(id);
   if (myAnchor === id) myAnchor = null;
@@ -3436,45 +3456,54 @@ function applyAnchor(a) {
   if (!A.marker) renderAnchor(A);
 }
 function renderAnchor(A) {
-  const g = new THREE.Group();
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.05, 8, 28), anchorMat);
-  ring.rotation.x = Math.PI / 2;
-  const core = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 10), anchorMat);
-  g.add(ring, core);
-  g.userData.anchorId = A.id;
-  scene.add(g);
-  A.marker = g;
-  anchorPickers.push(g);
-  g.position.set(A.x, 1.85, A.z);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: anchorTex, transparent: true, depthWrite: false }));
+  s.scale.set(0.55, 0.55, 1);
+  s.userData.anchorId = A.id;
+  scene.add(s);
+  A.marker = s;
+  anchorPickers.push(s);
+  s.position.set(A.x, ANCHOR_Y, A.z);
 }
-function tickAnchors() {
-  const bob = Math.sin(performance.now() * 0.002) * 0.05;
+let anchorAcc = 0;
+function tickAnchors(dt) {
+  anchorAcc += dt || 0.016;
+  const full = anchorAcc >= 0.08;              // rebuild ống ~12fps — centroid mỗi frame rẻ, chỉ geometry mới đắt
+  if (full) anchorAcc = 0;
+  const bob = Math.sin(performance.now() * 0.002) * 0.06;
   anchors.forEach((A) => {
     if (!A.marker) return;
     // điểm neo bám theo centroid member — nhóm đi đâu neo theo đó (mọi client tự tính
-    // từ presence nên khớp nhau, khỏi đồng bộ thêm)
+    // từ presence nên khớp nhau, khỏi đồng bộ thêm); lerp cho mượt
     let cx = 0, cz = 0, cn = 0;
     A.members.forEach((wid) => {
       const row = rowByWalk(wid), p = row && posOf(row);
       if (p) { cx += p.x; cz += p.z; cn++; }
     });
-    if (cn) { A.x = cx / cn; A.z = cz / cn; }
-    A.marker.position.set(A.x, 1.85 + bob, A.z);
+    if (cn) { A.x += (cx / cn - A.x) * 0.15; A.z += (cz / cn - A.z) * 0.15; }
+    A.marker.position.set(A.x, ANCHOR_Y + bob, A.z);
     // dọn sợi chỉ của member đã rời (rejoin wid mới / thoát convo / crash)
     A.lines.forEach((line, wid) => {
-      if (!A.members.includes(wid)) { scene.remove(line); A.lines.delete(wid); }
+      if (!A.members.includes(wid)) { scene.remove(line); if (line.geometry) line.geometry.dispose(); A.lines.delete(wid); }
     });
+    if (!full) return;
     A.members.forEach((wid) => {
       const row = rowByWalk(wid), p = row && posOf(row);
       let line = A.lines.get(wid);
-      if (!p) { if (line) { scene.remove(line); A.lines.delete(wid); } return; }
-      if (!line) { line = new THREE.Mesh(threadGeo, threadMat); scene.add(line); A.lines.set(wid, line); }
-      const hy = (row.walk ? 1.75 : 1.35) + (p.y || 0);
-      const dx = p.x - A.x, dy = hy - 1.85, dz = p.z - A.z;
-      const len = Math.hypot(dx, dy, dz) || 0.001;
-      line.position.set(A.x + dx / 2, 1.85 + dy / 2, A.z + dz / 2);
-      line.scale.set(1, len, 1);
-      line.quaternion.setFromUnitVectors(UP, _dir.set(dx / len, dy / len, dz / len));
+      if (!p) { if (line) { scene.remove(line); if (line.geometry) line.geometry.dispose(); A.lines.delete(wid); } return; }
+      const hy = (row.walk ? 1.85 : 1.45) + (p.y || 0);
+      const u = line ? line.userData : null;
+      if (line && Math.abs(p.x - u.px) < 0.02 && Math.abs(p.z - u.pz) < 0.02
+        && Math.abs(A.x - u.ax) < 0.02 && Math.abs(A.z - u.az) < 0.02 && u.hy === hy) return;
+      if (!line) { line = new THREE.Mesh(new THREE.BufferGeometry(), threadMat); scene.add(line); A.lines.set(wid, line); }
+      // Sline: đi thẳng lên khỏi đỉnh đầu rồi cong về neo — quadratic bezier
+      const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(p.x, hy, p.z),
+        new THREE.Vector3(p.x, hy + THREAD_RISE, p.z),
+        new THREE.Vector3(A.x, ANCHOR_Y, A.z));
+      const old = line.geometry;
+      line.geometry = new THREE.TubeGeometry(curve, 14, 0.013, 5, false);
+      if (old) old.dispose();
+      line.userData.px = p.x; line.userData.pz = p.z; line.userData.ax = A.x; line.userData.az = A.z; line.userData.hy = hy;
     });
   });
 }
