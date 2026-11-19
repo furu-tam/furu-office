@@ -43,6 +43,7 @@ let myLook = null;
 let pendingPresence = null;
 let localStream = null;
 let micOn = false, camOn = false;
+let wasMicOn = false;           // mic có đang bật trước khi rời bàn — tự bật lại khi ngồi lại
 let sharing = false;
 let screenStream = null;
 let screenTex = null;
@@ -774,7 +775,7 @@ function enterDesk(index, slot) {
   sitCamera(island.seats[slot - 1]);
   askNotify();
   if (quiet) setConn('on', 'Chỗ ngồi chơi, không bật mic hay camera');
-  else openTablePeer();
+  else openTablePeer().then(() => { if (wasMicOn) restoreMic(); });
 }
 function leaveDesk(silent) {
   if (myIsland === 0) return;
@@ -804,6 +805,7 @@ function leaveDesk(silent) {
   localMeter = null;
   remoteMeters.forEach(releaseMeter);
   remoteMeters.clear();
+  wasMicOn = micOn;
   micOn = false;
   camOn = false;
   setMyIsland(0);
@@ -1190,6 +1192,24 @@ function startVoice() {
       toast('Đã bật tiếng.');
     })
     .catch(() => toast('Chưa được phép dùng mic. Cho phép micro rồi bấm Bật tiếng lại.', 4800));
+}
+function restoreMic() {
+  const md = navigator.mediaDevices;
+  if (!md || !md.getUserMedia || localStream) return;
+  md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false })
+    .catch(() => md.getUserMedia({ audio: true, video: false }))
+    .then((stream) => {
+      if (myIsland === 0) { stream.getTracks().forEach((t) => t.stop()); return; }
+      micOn = true;
+      localStream = stream;
+      wasMicOn = false;
+      $('btnTalk').hidden = true;
+      syncControlButtons();
+      updateSelf();
+      Promise.resolve(myPeer ? null : openTablePeer()).then(() => pushStream());
+      toast('Đã bật lại tiếng.');
+    })
+    .catch(() => { $('btnTalk').hidden = false; });
 }
 function pushStream() {
   if (!myPeer || !localStream || myIsland === 0) return;
