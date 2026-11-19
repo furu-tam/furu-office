@@ -73,6 +73,9 @@ Panel ruột PeerJS (peer/conn/call/ICE/stream/floor/walk + log sự kiện):
 
 ## Kiến trúc nhanh
 
+**Tài liệu sâu nằm trong [`docs/`](docs/README.md)** — protocol map, audio model,
+FPV/convo, testing. Đọc `docs/` trước khi sửa `session.js`.
+
 - `src/world.js` — scene văn phòng, ghế, đảo, camera, agent; export `hooks` cho session.
 - `src/session.js` — presence, floor hub, PeerJS call/chat, FPV walk, convo, pair, DND.
 - `src/avatar.js` — nhân vật procedural (`buildCharacter`/`buildWalker`, look JSON sync qua presence).

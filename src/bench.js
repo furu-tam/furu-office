@@ -83,6 +83,7 @@ const api = {
   floor(msg) { if (hooks.isHost()) hooks.broadcastFloor(msg); else hooks.sendFloor(msg); },
   invite(id) { hooks.sendInviteRow(id); },
   convo() { return hooks.convoSet(); },
+  anchors() { return hooks.anchors ? hooks.anchors() : []; },
   clear() {
     for (const child of [...G.people.children]) {
       const id = child.userData.personId;

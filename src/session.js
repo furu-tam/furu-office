@@ -104,6 +104,9 @@ const convoSet = new Set();   // walkId các member trong cuộc trò chuyện
 let convoFar = 0;             // giây mọi member đều xa
 let tapTarget = null;         // row đang trong tầm vỗ vai mời
 let tapIn = null;             // {walkId, name, timer} invite đang chờ trả lời
+let rosterAt = 0;             // mốc nhận roster đầu — chặn chime hàng loạt lúc mới vào
+const anchors = new Map();    // aid -> {id, x, z, members:[walkIds], left:Set, marker, lines:Map}
+let myAnchor = null;          // anchor id của convo mình đang trong
 let tapFrom = null;           // id người vừa vỗ vai mình từ xa (nút Đi tới)
 const CAFE_ZONE = { x0: -13.6, x1: -4.6, z0: -8.2, z1: -1.2 }; // quầy + bàn cà phê + bar biển
 const ytVid = new URLSearchParams(location.search).get('yt') || '9kzE8isXlQY';
@@ -195,6 +198,29 @@ function patSound() {
       o.connect(og); og.connect(ctx.destination);
       o.start(t0 + delay);
       o.stop(t0 + delay + 0.1);
+    });
+  } catch (e) {}
+}
+// chuông nhẹ: ai đó ngồi vào tầm nghe / nhận vỗ vai mời nói chuyện
+function chimeSound() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    if (!audioCtx) audioCtx = new AC();
+    const ctx = audioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+    const t0 = ctx.currentTime + 0.02;
+    [[587, 0.20, 0], [1174, 0.09, 0.004]].forEach(([f, v, d]) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + d);
+      g.gain.exponentialRampToValueAtTime(v, t0 + d + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.9);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t0 + d);
+      o.stop(t0 + d + 0.95);
     });
   } catch (e) {}
 }
@@ -719,7 +745,7 @@ function enterDesk(index, slot) {
   $('btnMic').hidden = quiet;
   $('btnCam').hidden = quiet;
   $('btnChat').hidden = false;
-  $('btnLeave').textContent = quiet ? 'Rời chỗ' : 'Rời bàn';
+  $('btnLeave').textContent = (quiet ? 'Rời chỗ' : 'Rời bàn') + ' (Q)';
   $('btnCoffee').hidden = !quiet;
   $('btnCoffee').disabled = false;
   $('btnCoffee').textContent = 'Gọi cà phê';
@@ -791,7 +817,7 @@ function leaveDesk(silent) {
   $('btnMic').hidden = false;
   $('btnCam').hidden = false;
   $('btnChat').hidden = false;
-  $('btnLeave').textContent = 'Rời bàn';
+  $('btnLeave').textContent = 'Rời bàn (Q)';
   closeTvFull();
   $('btnTalk').hidden = false;
   $('btnHear').hidden = true;
@@ -893,6 +919,19 @@ function rowAtSeat(table, slot) {
   for (const row of people.values()) if (row.table === table && row.slot === slot) return row;
   return null;
 }
+const NEIGHBOR_DIST = 2.5;   // ghế kề = cùng hàng cạnh nhau (1.4m), đối diện (2.02m), xéo (2.46m)
+function neighborsOf(island) {
+  if (!island._nbrs) {
+    island._nbrs = island.seats.map((a, i) => {
+      const s = new Set();
+      island.seats.forEach((b, j) => {
+        if (i !== j && Math.hypot(a.x - b.x, a.z - b.z) <= NEIGHBOR_DIST) s.add(j + 1);
+      });
+      return s;
+    });
+  }
+  return island._nbrs;
+}
 function hearingGain(pid) {
   if (dnd) return 0;
   if (pairPeer) return pid === pairPeer ? 1 : (inMeeting() ? PAIR_DUCK : 0);
@@ -906,13 +945,19 @@ function hearingGain(pid) {
   if (entry && entry.bc) return 1;
   const row = seatByPeer(pid);
   const island = islandOf(myIsland);
-  if (!row || !island || row.table !== myIsland || !row.slot) return 1;
-  const seat = island.seats[row.slot - 1], mine = island.seats[mySlot - 1];
-  if (!seat || !mine) return 1;
-  const d = Math.hypot(seat.x - mine.x, seat.z - mine.z);
-  if (d <= HEAR_FULL) return 1;
-  if (d >= HEAR_RANGE) return 0;
-  return 1 - (d - HEAR_FULL) / (HEAR_RANGE - HEAR_FULL);
+  if (!row || !island || row.table !== myIsland || !row.slot) return 0;
+  if (island.quiet || island.share) return 1;
+  const mine = neighborsOf(island)[mySlot - 1];
+  if (!mine) return 0;
+  return mine.has(row.slot) ? 1 : 0;
+}
+// row có trong tầm nghe của mình không (neighbor seat / bc / meeting / pair / convo)
+function canHearRow(row) {
+  if (!row || row.id === myId) return false;
+  if (row.walkId && convoSet.has(row.walkId)) return true;
+  if (convoSet.size || pairPeer) return false;   // đang convo/pair → chỉ member mới là "đang nghe"
+  if (!row.peerId) return false;
+  return hearingGain(row.peerId) > 0;
 }
 function applyGains() {
   applyWalkGains();
@@ -922,6 +967,15 @@ function applyGains() {
     const audio = remoteAudio.get(entry.remoteStream.id);
     if (audio) audio.volume = hearingGain(pid);
   });
+  // chuông khi ai vừa vào tầm nghe (bỏ qua đợt roster đầu — khỏi réo cả phòng)
+  let ring = false;
+  people.forEach((row) => {
+    const heard = canHearRow(row) || (row.walkId && convoSet.has(row.walkId));
+    if (heard && !row._heard && performance.now() - rosterAt > 4000) ring = true;
+    row._heard = heard;
+  });
+  if (ring) chimeSound();
+  updateConvoPanel();
 }
 function syncHearRing() {
   const island = islandOf(myIsland);
@@ -1054,7 +1108,22 @@ export function updateVoiceMeters() {
       }
       if (meter) level = voiceLevel(rmsOf(meter));
     }
-    setTalking(row.el, level, live);
+    // walk-call streams (convo): meter riêng — peers[] chỉ chứa table calls
+    let wlv = 0, wliveAny = false;
+    walkStreams.forEach((ws, wid) => {
+      if (!row.walkId || row.walkId !== wid) return;
+      const wlive = ws.getAudioTracks().some((t) => t.readyState === 'live');
+      wliveAny = wliveAny || wlive;
+      if (wlive) {
+        heard.add(ws.id);
+        let m2 = remoteMeters.get(ws.id);
+        if (!m2) { m2 = makeMeter(ws); if (m2) remoteMeters.set(ws.id, m2); }
+        if (m2) wlv = Math.max(wlv, voiceLevel(rmsOf(m2)));
+      }
+    });
+    const level2 = Math.max(level, wlv), live2 = live || wliveAny;
+    setTalking(row.el, level2, live2);
+    if (row._cpLi) row._cpLi.classList.toggle('talk', live2 && row.el.classList.contains('speaking'));
     const island = islandOf(row.table);
     const screen = island && island.screens[row.slot - 1];
     if (!screen) return;
@@ -1128,6 +1197,7 @@ function pushStream() {
     if (row.table !== myIsland || row.id === myId || !row.peerId) return;
     const entry = peers[row.peerId];
     if (entry && entry.call) { try { entry.call.close(); } catch (e) {} entry.call = null; }
+    if (entry) entry.answeredEmpty = false;
     dial(row.peerId);
   });
 }
@@ -1612,6 +1682,9 @@ function wireMyPeer() {
       return;
     }
     if (!call.peer || call.peer === myPeer.id || myIsland === 0) { try { call.close(); } catch (e) {} return; }
+    // chưa có localStream thì phải answer rỗng — đánh dấu để re-dial bằng stream thật
+    // sau (lỗi nghe 1 chiều: caller nghe im lặng mãi vì entry.call đã tồn tại).
+    getEntry(call.peer).answeredEmpty = !localStream;
     try { if (localStream) call.answer(localStream); else call.answer(); }
     catch (e) { try { call.answer(); } catch (e2) {} }
     attachCall(call.peer, call, 0);
@@ -1662,7 +1735,7 @@ function dial(pid, tries) {
   const entry = getEntry(pid);
   if (row) { entry.name = row.name || entry.name; entry.slot = row.slot || entry.slot; }
   if (entry.conn && !entry.conn.open) entry.conn = null;
-  if (entry.call && !callLive(entry.call)) { entry.call = null; entry.remoteStream = null; }
+  if (entry.call && (!callLive(entry.call) || (entry.answeredEmpty && localStream))) { try { entry.call.close(); } catch (e) {} entry.call = null; entry.remoteStream = null; entry.answeredEmpty = false; }
   const pendingFresh = entry.pending && performance.now() - entry.pendingAt < 5000;
   if (!entry.conn && !pendingFresh) {
     if (entry.pending) { try { entry.pending.close(); } catch (e) {} entry.pending = null; }
@@ -1686,7 +1759,7 @@ function watchDials() {
     people.forEach((row) => {
       if (row.table !== myIsland || row.id === myId || !row.peerId) return;
       const entry = peers[row.peerId];
-      if (entry && entry.conn && entry.conn.open && (!localStream || callLive(entry.call))) return;
+      if (entry && entry.conn && entry.conn.open && (!localStream || (callLive(entry.call) && !entry.answeredEmpty))) return;
       dial(row.peerId, 0);
     });
   }, 2500);
@@ -2018,6 +2091,8 @@ function applyPresence(msg, relay) {
     const keep = new Set(msg.people.map((p) => p.id));
     [...people.keys()].forEach((id) => { if (id !== myId && !keep.has(id)) removeSeat(id); });
     msg.people.forEach((p) => { upsertSeat(p); notePeer(p); });
+    if (Array.isArray(msg.anchors)) msg.anchors.forEach((a) => applyAnchor(a, true));
+    rosterAt = performance.now();
     resolveSeatClash();
     refreshScreens();
   }
@@ -2063,6 +2138,29 @@ function onFloorData(msg, from) {
   }
   if (msg.kind === 'log' && Array.isArray(msg.items) && !floorHost) {
     msg.items.forEach((item) => onSay(item, false, true));
+    return;
+  }
+  if (msg.kind === 'anchor') {
+    if (floorHost && from) broadcastFloor(msg);
+    applyAnchor({ ...(msg.anchor || {}), members: msg.members, left: msg.left, gone: msg.gone });
+    return;
+  }
+  if (msg.kind === 'join-req') {
+    if (floorHost && from) broadcastFloor(msg);
+    if (msg.from !== myWalkId()) onJoinReq(msg);
+    return;
+  }
+  if (msg.kind === 'join-ack') {
+    if (floorHost && from) broadcastFloor(msg);
+    onJoinAck(msg);
+    return;
+  }
+  if (msg.kind === 'join-deny') {
+    if (floorHost && from) broadcastFloor(msg);
+    if (msg.to === myWalkId() && joinWait) {
+      clearTimeout(joinWait.timer); joinWait = null;
+      toast((msg.name || 'Thành viên') + ' không cho vào cuộc trò chuyện.');
+    }
     return;
   }
   if (!floorHost && (msg.kind === 'here' || msg.kind === 'gone' || msg.kind === 'roster' || msg.kind === 'move')) applyPresence(msg, false);
@@ -2154,7 +2252,7 @@ function becomeHost(gen, p, index) {
     conn.on('open', () => {
       conn._seen = performance.now();
       try { conn.send({ kind: 'beat', t: Date.now() }); } catch (e) {}
-      try { conn.send({ kind: 'roster', people: rosterList() }); } catch (e) {}
+      try { conn.send({ kind: 'roster', people: rosterList(), anchors: anchorList() }); } catch (e) {}
       if (roomLog.length) { try { conn.send({ kind: 'log', items: roomLog.slice(-30) }); } catch (e) {} }
     });
     conn.on('data', (msg) => {
@@ -2273,13 +2371,19 @@ canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clie
 function fpvAct() {
   if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
   raycaster.setFromCamera({ x: 0, y: 0 }, camera);
-  const hits = raycaster.intersectObjects([...G.people.children, ...pickers], true);
+  const hits = raycaster.intersectObjects([...G.people.children, ...pickers, ...anchorPickers], true);
   for (const hit of hits) {
-    let o = hit.object, pid = '', pk = null;
+    let o = hit.object, pid = '', pk = null, aid = null;
     while (o) {
       if (!pid && o.userData && o.userData.personId) pid = o.userData.personId;
       if (!pk && o.userData && (o.userData.island !== undefined)) pk = o.userData;
+      if (!aid && o.userData && o.userData.anchorId) aid = o.userData.anchorId;
       o = o.parent;
+    }
+    if (aid) {
+      const A = anchors.get(aid);
+      if (A && myAnchor !== aid) requestJoinAnchor(A);
+      return;
     }
     if (pid && pid !== myId) {
       const row = people.get(pid);
@@ -2789,13 +2893,29 @@ function findSpawn(sx, sz, island) {
   }
   return { x, z };
 }
+// spawn corridor: giữa view biển (z≈-6.65) và bàn làm việc (z≈0) — trải đều trục x, nhìn ra biển
+const WALK_SPAWNS = [
+  { x: -8, z: -4 }, { x: -5, z: -4 }, { x: -2, z: -4 }, { x: 1, z: -4 },
+  { x: 4, z: -4 }, { x: 7, z: -4 }, { x: -6.5, z: -2.2 }, { x: -3.5, z: -2.2 },
+  { x: -0.5, z: -2.2 }, { x: 2.5, z: -2.2 }, { x: 5.5, z: -2.2 },
+];
+function walkSpawn() {
+  let h = 0; for (const c of myId) h = (h * 31 + c.charCodeAt(0)) | 0;
+  for (let i = 0; i < WALK_SPAWNS.length; i++) {
+    const s = WALK_SPAWNS[Math.abs(h + i) % WALK_SPAWNS.length];
+    const taken = [...people.values()].some((r) => r.walk && Math.hypot(r.wx - s.x, r.wz - s.z) < 1.2);
+    if (!taken && !hitWall(s.x, s.z)) return s;
+  }
+  return { x: 0, z: -3, yaw: 0 };
+}
 function enterFpv(sx, sz, syaw) {
   if (fpv) return;
   if (!$('maker').hidden) { toast('Chọn hình đã rồi đi dạo nhé.'); return; }
   if (myIsland > 0) leaveDesk();
   ensureWalkPeer();
   fpv = true;
-  fpvPos.set(sx ?? 0, 0, sz ?? 4); fpvYaw = syaw ?? Math.PI; fpvPitch = 0;
+  const sp = (sx != null && sz != null) ? { x: sx, z: sz, yaw: syaw ?? 0 } : walkSpawn();
+  fpvPos.set(sp.x, 0, sp.z); fpvYaw = sp.yaw ?? 0; fpvPitch = 0;
   $('crosshair').hidden = false;
   $('vwalk').setAttribute('aria-pressed', 'true');
   buttons.forEach(b => { if (b.id !== 'vwalk') b.setAttribute('aria-pressed', 'false'); });
@@ -2851,10 +2971,15 @@ document.addEventListener('mousemove', (e) => {
   fpvPitch = Math.max(-1.45, Math.min(1.45, fpvPitch - e.movementY * 0.0022));
 });
 const KEYMAP = { KeyW: [0, -1], KeyS: [0, 1], KeyA: [-1, 0], KeyD: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
-document.addEventListener('keydown', (e) => { if (fpv && KEYMAP[e.code]) { fpvKeys.add(e.code); e.preventDefault(); } });
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) { fpvKeys.clear(); return; }
+  if (fpv && KEYMAP[e.code]) { fpvKeys.add(e.code); e.preventDefault(); }
+});
 document.addEventListener('keyup', (e) => fpvKeys.delete(e.code));
 export function tickSession(dt) {
   if (fpv) fpvTick(dt);
+  tickAnchors(dt);
 }
 function fpvTick(dt) {
   let dx = 0, dz = 0;
@@ -2887,10 +3012,19 @@ document.addEventListener('visibilitychange', () => {
   if (fpv && document.hidden) { fpvSentAt = 0; sendWalkPos(); }
 });
 // --- walk peer: kênh mời nói chuyện + convo ---
+function walkPeerReady() {
+  return new Promise((res) => {
+    if (!walkPeer || walkPeer.destroyed) return res(false);
+    if (walkPeer.open) return res(true);
+    walkPeer.once('open', () => res(true));
+    setTimeout(() => res(!!(walkPeer && walkPeer.open)), 8000);
+  });
+}
 function ensureWalkPeer() {
-  if (walkPeer) return Promise.resolve();
+  if (walkPeer) return walkPeerReady();
   return loadPeerLib().then((ok) => ok ? iceServers() : null).then((ice) => {
-    if (!ice || walkPeer) return;
+    if (!ice) return false;
+    if (walkPeer) return walkPeerReady();
     walkPeer = new Peer(myWalkId(), peerOpts(ice));
     walkPeer.on('connection', (conn) => {
       wconns.set(conn.peer, conn);
@@ -2908,6 +3042,7 @@ function ensureWalkPeer() {
       call.on('close', () => dropWalkPeer(call.peer));
     });
     walkPeer.on('error', (e) => { if (e && e.type === 'peer-unavailable') toast('Không kết nối được'); });
+    return walkPeerReady();
   });
 }
 function addWalkStream(wid, stream) {
@@ -2920,7 +3055,9 @@ function dropWalkPeer(wid) {
   if (s) { const a = remoteAudio.get(s.id); if (a) { try { a.pause(); a.srcObject = null; a.remove(); } catch (e) {} remoteAudio.delete(s.id); } }
   walkCalls.delete(wid); walkStreams.delete(wid);
   convoSet.delete(wid);
+  syncAnchorOnLeave(wid);
   if (!convoSet.size) $('btnConvoEnd').hidden = true;
+  updateConvoPanel();
 }
 function dialWalk(wid) {
   if (!walkPeer || walkCalls.has(wid)) return;
@@ -2943,9 +3080,10 @@ function ensureVoiceThen(fn) {
     .then((s) => { localStream = s; micOn = true; fn(); })
     .catch(() => toast('Không lấy được mic'));
 }
-function joinConvo(wid, members) {
+function joinConvo(wid, members, aid) {
   if (pairPeer) exitPair();
   ensureVoiceThen(() => {
+    if (aid && aid !== myAnchor) { myAnchor = aid; }   // vào convo đã có anchor — dùng anchor sẵn có
     convoSet.add(wid);
     dialWalk(wid);
     members.forEach((m) => { if (m !== myWalkId() && !convoSet.has(m)) { convoSet.add(m); setTimeout(() => dialWalk(m), 700); } });
@@ -2959,6 +3097,7 @@ function joinConvo(wid, members) {
       try { if (cNew && cNew.open) cNew.send({ kind: 'convo-join', id: w, dial: 1 }); } catch (e) {}
     });
     $('btnConvoEnd').hidden = false;
+    ensureAnchor();
     applyGains(); applyWalkGains();
     toast('Đang trò chuyện' + (convoSet.size > 1 ? ' · ' + convoSet.size + ' người' : ''));
   });
@@ -2970,28 +3109,33 @@ function leaveConvo(silent) {
   walkCalls.forEach((c) => { try { c.close(); } catch (e) {} });
   walkCalls.clear(); walkStreams.clear(); wconns.clear();
   convoFar = 0;
+  leaveAnchor();
   $('btnConvoEnd').hidden = true;
-  applyGains(); applyWalkGains();
+  applyGains(); applyWalkGains(); updateConvoPanel();
   if (!silent) toast('Đã rời cuộc trò chuyện');
 }
 function handleWalkData(wid, d) {
   if (!d || !d.kind) return;
   if (d.kind === 'invite') {
-    if (dnd || pairPeer || convoSet.size) {
+    if (dnd || pairPeer) {
       const c = wconns.get(wid);
-      try { if (c && c.open) c.send({ kind: 'invite-busy', reason: dnd ? 'dnd' : pairPeer ? 'pair' : 'convo' }); } catch (e) {}
+      try { if (c && c.open) c.send({ kind: 'invite-busy', reason: dnd ? 'dnd' : 'pair' }); } catch (e) {}
       return;
     }
     if (tapIn) clearTimeout(tapIn.timer);
     tapIn = { walkId: wid, name: d.name || 'Ai đó' };
+    chimeSound();
     pushNotif('invite', tapIn.name, { wid });
-    $('tapAskText').textContent = tapIn.name + ' vỗ vai bạn — nói chuyện?';
+    // đang trong convo → member được hỏi để cho người mới vào (không auto-busy)
+    $('tapAskText').textContent = convoSet.size
+      ? tapIn.name + ' muốn vào cuộc trò chuyện — cho vào?'
+      : tapIn.name + ' vỗ vai bạn — nói chuyện?';
     $('tapAsk').hidden = false;
     tapIn.timer = setTimeout(() => { $('tapAsk').hidden = true; tapIn = null; }, 15000);
   } else if (d.kind === 'invite-accept') {
-    joinConvo(wid, d.members || []);
+    joinConvo(wid, d.members || [], d.anchor);
   } else if (d.kind === 'invite-busy') {
-    toast(d.reason === 'dnd' ? 'Người đó đang bật Không làm phiền' : d.reason === 'convo' ? 'Người đó đang trong cuộc trò chuyện khác' : 'Người đó đang nói riêng');
+    toast(d.reason === 'dnd' ? 'Người đó đang bật Không làm phiền' : d.reason === 'convo' ? 'Người đó đang trong cuộc trò chuyện khác' : d.reason === 'pair' ? 'Người đó đang nói riêng' : 'Người đó từ chối');
   } else if (d.kind === 'convo-join') {
     if (convoSet.size) {
       convoSet.add(d.id);
@@ -2999,12 +3143,14 @@ function handleWalkData(wid, d) {
       if (d.dial) setTimeout(() => dialWalk(d.id), 600);
       else pendingWalk.add(d.id);
       $('btnConvoEnd').hidden = false;
-      applyWalkGains();
+      syncAnchorOnJoin(d.id);
+      applyWalkGains(); updateConvoPanel();
     }
   } else if (d.kind === 'convo-leave') {
     const c = walkCalls.get(d.id); try { if (c) c.close(); } catch (e) {}
+    syncAnchorOnLeave(d.id);
     dropWalkPeer(d.id);
-    applyWalkGains();
+    applyWalkGains(); updateConvoPanel();
   }
 }
 function walkGain(wid) {
@@ -3020,8 +3166,8 @@ function sendInvite(row) {
   if (!row || row.id === myId) return;
   if (!row.walkId) { toast((row.name || 'Người đó') + ' chưa hỗ trợ nói chuyện khi đi dạo.'); return; }
   if (convoSet.size && convoSet.has(row.walkId)) return;
-  ensureWalkPeer().then(() => {
-    if (!walkPeer) { toast('Không nối được kênh nói chuyện.'); return; }
+  ensureWalkPeer().then((ok) => {
+    if (!ok || !walkPeer) { toast('Không nối được kênh nói chuyện.'); return; }
     let conn = wconns.get(row.walkId);
     if (!conn || !conn.open) {
       conn = walkPeer.connect(row.walkId, { reliable: true });
@@ -3058,9 +3204,16 @@ document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const tag = e.target && e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;   // Cmd+Shift+R v.v. là phím tắt browser — bỏ qua
   if (e.code === 'Escape' && $('bellPanel') && !$('bellPanel').hidden) { $('bellPanel').hidden = true; return; }
   if (e.code === 'KeyE' && fpv && sitNear) { e.preventDefault(); sitFromWalk(); return; }
   if (e.code === 'KeyG' && (fpv || myIsland > 0)) { e.preventDefault(); callAgent(); return; }
+  if (e.code === 'KeyQ') {
+    e.preventDefault();
+    if (convoSet.size) leaveConvo();
+    else if (myIsland > 0) $('btnLeave').click();
+    return;
+  }
   if (e.code === 'KeyT' && !$('tapNotice').hidden) { e.preventDefault(); goToTapper(); return; }
   if (e.code === 'KeyY' || e.code === 'Enter') {
     if (!$('tapAsk').hidden) { e.preventDefault(); $('tapYes').click(); }
@@ -3113,7 +3266,7 @@ setInterval(() => {
   }
   tapTarget = best;
   if (tapTarget) tapTagEl.textContent = 'Vỗ vai ' + tapTarget.name;
-  if (convoSet.size) {
+  if (convoSet.size && fpv) {
     const me = myPos();
     const near = me && [...convoSet].some((wid) => {
       const r = rowByWalk(wid), p = r && posOf(r);
@@ -3129,21 +3282,27 @@ $('tapYes').addEventListener('click', () => {
   $('tapAsk').hidden = true;
   const t = tapIn; tapIn = null;
   if (!t) return;
+  if (t.anchorJoin) { t.admit(); t.ack(); return; }   // xin vào anchor — member nào bấm trước cho vào
   if (pairPeer) exitPair();
-  ensureWalkPeer().then(() => ensureVoiceThen(() => {
-    const conn = wconns.get(t.walkId);
-    try { if (conn && conn.open) conn.send({ kind: 'invite-accept', members: [...convoSet, myWalkId()] }); } catch (e) {}
-    wconns.forEach((c, w) => { try { if (convoSet.has(w) && c.open) c.send({ kind: 'convo-join', id: t.walkId }); } catch (e) {} });
-    pendingWalk.add(t.walkId);
+  ensureWalkPeer().then((ok) => {
+    if (!ok) { toast('Không nối được kênh nói chuyện.'); return; }
+    ensureVoiceThen(() => {
     convoSet.add(t.walkId);
+    pendingWalk.add(t.walkId);
+    ensureAnchor();
+    const conn = wconns.get(t.walkId);
+    try { if (conn && conn.open) conn.send({ kind: 'invite-accept', members: [...convoSet], anchor: myAnchor }); } catch (e) {}
+    wconns.forEach((c, w) => { try { if (convoSet.has(w) && w !== t.walkId && c.open) c.send({ kind: 'convo-join', id: t.walkId }); } catch (e) {} });
     $('btnConvoEnd').hidden = false;
     applyGains();
-  }));
+    });
+  });
 });
 $('tapNo').addEventListener('click', () => {
   $('tapAsk').hidden = true;
   const t = tapIn; tapIn = null;
   if (!t) return;
+  if (t.anchorJoin) { floorSend({ kind: 'join-deny', to: t.walkId, anchor: t.anchorJoin, name: myName() }); return; }
   const conn = wconns.get(t.walkId);
   try { if (conn && conn.open) conn.send({ kind: 'invite-busy', reason: 'decline' }); } catch (e) {}
 });
@@ -3210,8 +3369,263 @@ hooks.debug = () => ({
   })),
   floor: { host: floorHost, link: floorLink ? floorLink.open : null, conns: floorConns.length, people: people.size },
   walk: { peer: walkPeer ? walkPeer.id : null, convo: convoSet.size, conns: wconns.size, streams: walkStreams.size, calls: walkCalls.size },
+  anchors: [...anchors.values()].map((a) => ({ id: a.id, x: +a.x.toFixed(2), z: +a.z.toFixed(2), members: a.members, marker: !!a.marker, lines: a.lines.size })),
+  myAnchor,
   log: dbgLog.slice(-24),
 });
+hooks.anchors = () => [...anchors.values()].map((a) => ({ id: a.id, x: a.x, z: a.z, members: a.members.slice(), marker: !!a.marker, lines: a.lines.size }));
+// ---------- anchor (điểm neo) + sợi chỉ đỏ + panel người trong tầm nghe ----------
+const anchorPickers = [];
+const ANCHOR_Y = 2.6;            // điểm neo treo cao trên đầu
+const THREAD_RISE = 1.0;         // chỉ đi thẳng lên khỏi đỉnh đầu bao nhiêu trước khi cong về neo
+const anchorTex = (() => {       // icon bong bóng chat vẽ bằng canvas
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = '#ff5560';
+  const bx = 14, by = 26, bw = 100, bh = 62, r = 26;
+  x.beginPath();
+  x.moveTo(bx + r, by);
+  x.arcTo(bx + bw, by, bx + bw, by + bh, r);
+  x.arcTo(bx + bw, by + bh, bx, by + bh, r);
+  x.arcTo(bx, by + bh, bx, by, r);
+  x.arcTo(bx, by, bx + bw, by, r);
+  x.closePath();
+  x.moveTo(46, by + bh - 4);
+  x.lineTo(38, by + bh + 22);
+  x.lineTo(68, by + bh - 4);
+  x.fill();
+  x.fillStyle = '#fff';
+  [44, 64, 84].forEach((cx) => { x.beginPath(); x.arc(cx, by + bh / 2, 7, 0, Math.PI * 2); x.fill(); });
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+const threadMat = new THREE.MeshBasicMaterial({ color: 0xff4d55, transparent: true, opacity: 0.8 });
+const convoPanel = document.createElement('div');
+convoPanel.id = 'convoPanel';
+convoPanel.hidden = true;
+convoPanel.innerHTML = '<div class="cp-title">Đang nghe</div><ul id="cpList"></ul>';
+document.body.appendChild(convoPanel);
+const cpList = convoPanel.querySelector('#cpList');
+
+function updateConvoPanel() {
+  const items = [];
+  if (convoSet.size) {
+    convoSet.forEach((wid) => { const r = rowByWalk(wid); if (r && r.id !== myId) items.push(r); });
+  } else {
+    people.forEach((row) => { if (row.id !== myId && canHearRow(row)) items.push(row); });
+  }
+  cpList.innerHTML = '';
+  items.forEach((row) => {
+    const li = document.createElement('li');
+    li.innerHTML = '<i class="dot"></i><span class="nm">' + esc(row.name || 'Bạn') + '</span><span class="st"></span>';
+    li.dataset.pid = row.id;
+    row._cpLi = li;
+    cpList.appendChild(li);
+  });
+  convoPanel.hidden = !items.length;
+}
+function floorSend(msg) {
+  if (floorHost) { broadcastFloor(msg); return; }
+  if (floorLink && floorLink.open) { try { floorLink.send(msg); } catch (e) {} }
+}
+function anchorList() {
+  return [...anchors.values()].map((a) => ({ id: a.id, x: a.x, z: a.z, members: a.members.slice(), left: [...a.left] }));
+}
+function anchorBroadcast() {
+  const A = anchors.get(myAnchor);
+  if (A) floorSend({ kind: 'anchor', anchor: { id: A.id, x: A.x, z: A.z }, members: A.members.slice(), left: [...A.left] });
+}
+// id anchor suy ra từ member nhỏ nhất — nhiều client rebuild cùng lúc vẫn ra cùng id (converge)
+function anchorIdFor() { return 'a-' + [myWalkId(), ...convoSet].sort()[0]; }
+function ensureAnchor() {
+  const me = myPos();
+  if (!me) return;
+  if (!myAnchor) myAnchor = anchorIdFor();
+  let A = anchors.get(myAnchor);
+  if (!A) {
+    A = { id: myAnchor, x: me.x, z: me.z, members: [], left: new Set(), marker: null, lines: new Map() };
+    anchors.set(myAnchor, A);
+  }
+  A.members = [...new Set([...A.members, myWalkId(), ...convoSet])];
+  A.left.delete(myWalkId());
+  if (!A.marker) renderAnchor(A);
+  anchorBroadcast();
+  updateConvoPanel();
+}
+function leaveAnchor() {
+  if (!myAnchor) return;
+  const A = anchors.get(myAnchor);
+  const wid = myWalkId();
+  if (A) {
+    A.members = A.members.filter((m) => m !== wid);
+    A.left.add(wid);
+    if (A.members.length < 2) { floorSend({ kind: 'anchor', anchor: { id: A.id }, gone: true }); dropAnchor(A.id); }
+    else anchorBroadcast();
+  }
+  myAnchor = null;
+}
+function dropAnchor(id) {
+  const A = anchors.get(id);
+  if (!A) return;
+  if (A.marker) { scene.remove(A.marker); const i = anchorPickers.indexOf(A.marker); if (i >= 0) anchorPickers.splice(i, 1); }
+  A.lines.forEach((l) => { scene.remove(l); if (l.geometry) l.geometry.dispose(); });
+  A.lines.clear();
+  anchors.delete(id);
+  if (myAnchor === id) myAnchor = null;
+}
+function applyAnchor(a) {
+  if (!a || !a.id) return;
+  // anchor chết — nhưng mình còn đang trong convo → rebuild ngay (chết nhầm do list lệch)
+  if (a.gone) { dropAnchor(a.id); if (convoSet.size) ensureAnchor(); return; }
+  // một người chỉ thuộc 1 convo — anchor khác chứa member trùng là bản forked-id cũ → dọn;
+  // nhưng member trùng vẫn nằm trong convo của mình thì list bên kia mới là stale → bỏ qua
+  if (Array.isArray(a.members) && a.members.length) {
+    a.members.forEach((m) => {
+      if (m === myWalkId() || convoSet.has(m)) return;
+      anchors.forEach((A2) => { if (A2.id !== a.id && A2.members.includes(m)) dropAnchor(A2.id); });
+    });
+  }
+  let A = anchors.get(a.id);
+  if (!A) { A = { id: a.id, x: a.x, z: a.z, members: [], left: new Set(), marker: null, lines: new Map() }; anchors.set(a.id, A); }
+  A.x = a.x; A.z = a.z;
+  if (Array.isArray(a.members)) {
+    const had = new Set(A.members);
+    A.members = a.members;
+    // member mới trong broadcast → chỉ authorize call sẵn (pendingWalk);
+    // convoSet chỉ đổi qua convo-join/call thật — broadcast stale không được re-add người đã rời.
+    if (myAnchor === a.id) a.members.forEach((m) => { if (m !== myWalkId() && !had.has(m) && !A.left.has(m) && convoSet.size) pendingWalk.add(m); });
+    a.members.forEach((m) => A.left.delete(m));   // đã vào lại thì xóa khỏi danh sách rời
+  }
+  if (Array.isArray(a.left)) a.left.forEach((w) => A.left.add(w));
+  // mình nằm trong members và đang có convo → anchor này là của mình (bên được mời);
+  // chuyển anchor thì dọn anchor cũ của mình — mình chỉ thuộc 1 convo
+  if (A.members.includes(myWalkId()) && (convoSet.size || pendingWalk.size)) {
+    if (myAnchor && myAnchor !== a.id) dropAnchor(myAnchor);
+    myAnchor = a.id;
+  }
+  if (A.members.length < 2) { dropAnchor(a.id); if (convoSet.size) ensureAnchor(); return; }
+  if (!A.marker) renderAnchor(A);
+}
+function renderAnchor(A) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: anchorTex, transparent: true, depthWrite: false }));
+  s.scale.set(0.55, 0.55, 1);
+  s.userData.anchorId = A.id;
+  scene.add(s);
+  A.marker = s;
+  anchorPickers.push(s);
+  s.position.set(A.x, ANCHOR_Y, A.z);
+}
+let anchorAcc = 0;
+function tickAnchors(dt) {
+  anchorAcc += dt || 0.016;
+  const full = anchorAcc >= 0.08;              // rebuild ống ~12fps — centroid mỗi frame rẻ, chỉ geometry mới đắt
+  if (full) anchorAcc = 0;
+  const bob = Math.sin(performance.now() * 0.002) * 0.06;
+  anchors.forEach((A) => {
+    if (!A.marker) return;
+    // điểm neo bám theo centroid member — nhóm đi đâu neo theo đó (mọi client tự tính
+    // từ presence nên khớp nhau, khỏi đồng bộ thêm); lerp cho mượt
+    let cx = 0, cz = 0, cn = 0;
+    A.members.forEach((wid) => {
+      const row = rowByWalk(wid), p = row && posOf(row);
+      if (p) { cx += p.x; cz += p.z; cn++; }
+    });
+    if (cn) { A.x += (cx / cn - A.x) * 0.15; A.z += (cz / cn - A.z) * 0.15; }
+    A.marker.position.set(A.x, ANCHOR_Y + bob, A.z);
+    // dọn sợi chỉ của member đã rời (rejoin wid mới / thoát convo / crash)
+    A.lines.forEach((line, wid) => {
+      if (!A.members.includes(wid)) { scene.remove(line); if (line.geometry) line.geometry.dispose(); A.lines.delete(wid); }
+    });
+    if (!full) return;
+    A.members.forEach((wid) => {
+      const row = rowByWalk(wid), p = row && posOf(row);
+      let line = A.lines.get(wid);
+      if (!p) { if (line) { scene.remove(line); if (line.geometry) line.geometry.dispose(); A.lines.delete(wid); } return; }
+      const hy = (row.walk ? 1.85 : 1.45) + (p.y || 0);
+      const u = line ? line.userData : null;
+      if (line && Math.abs(p.x - u.px) < 0.02 && Math.abs(p.z - u.pz) < 0.02
+        && Math.abs(A.x - u.ax) < 0.02 && Math.abs(A.z - u.az) < 0.02 && u.hy === hy) return;
+      if (!line) { line = new THREE.Mesh(new THREE.BufferGeometry(), threadMat); scene.add(line); A.lines.set(wid, line); }
+      // Sline: đi thẳng lên khỏi đỉnh đầu rồi cong về neo — quadratic bezier
+      const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(p.x, hy, p.z),
+        new THREE.Vector3(p.x, hy + THREAD_RISE, p.z),
+        new THREE.Vector3(A.x, ANCHOR_Y, A.z));
+      const old = line.geometry;
+      line.geometry = new THREE.TubeGeometry(curve, 14, 0.013, 5, false);
+      if (old) old.dispose();
+      line.userData.px = p.x; line.userData.pz = p.z; line.userData.ax = A.x; line.userData.az = A.z; line.userData.hy = hy;
+    });
+  });
+}
+let joinWait = null; // {anchor, timer} chờ join-ack
+function requestJoinAnchor(A) {
+  if (!A || myAnchor === A.id) return;
+  if (convoSet.size) { toast('Đang trong cuộc trò chuyện — rời trước đã.'); return; }
+  if (dnd) { toast('Đang bật Không làm phiền.'); return; }
+  const rejoin = A.left.has(myWalkId()) || A.members.includes(myWalkId());
+  if (joinWait) clearTimeout(joinWait.timer);
+  joinWait = { anchor: A.id, timer: setTimeout(() => { joinWait = null; toast('Chưa ai trả lời — thử lại sau.'); }, 8000) };
+  floorSend({ kind: 'join-req', anchor: A.id, from: myWalkId(), name: myName(), rejoin });
+  toast(rejoin ? 'Đang vào lại cuộc trò chuyện…' : 'Đã xin vào cuộc trò chuyện…');
+}
+function joinAnchorConvo(aid, members) {
+  ensureVoiceThen(() => {
+    convoSet.clear();
+    members.forEach((m) => { if (m !== myWalkId()) { convoSet.add(m); setTimeout(() => dialWalk(m), 300); } });
+    myAnchor = aid;
+    const A = anchors.get(aid);
+    if (A && !A.members.includes(myWalkId())) { A.members.push(myWalkId()); anchorBroadcast(); }
+    $('btnConvoEnd').hidden = false;
+    applyGains(); applyWalkGains(); updateConvoPanel();
+    toast('Đã vào cuộc trò chuyện · ' + convoSet.size + ' người');
+  });
+}
+function onJoinReq(d) {
+  const A = anchors.get(d.anchor);
+  if (!A || !A.members.includes(myWalkId())) return;
+  const ack = () => floorSend({ kind: 'join-ack', to: d.from, anchor: d.anchor, members: A.members.slice(), by: myName() });
+  const admit = () => {
+    if (!convoSet.has(d.from)) { convoSet.add(d.from); pendingWalk.add(d.from); }
+    if (!A.members.includes(d.from)) { A.members.push(d.from); anchorBroadcast(); }
+    $('btnConvoEnd').hidden = false;
+    updateConvoPanel();
+  };
+  if (d.rejoin || (d.from && A.left.has(d.from))) { admit(); ack(); return; }   // member cũ vào lại — khỏi hỏi
+  if (dnd || pairPeer) return;
+  if (tapIn) clearTimeout(tapIn.timer);
+  tapIn = { walkId: d.from, name: d.name || 'Ai đó', anchorJoin: d.anchor, ack, admit };
+  chimeSound();
+  $('tapAskText').textContent = tapIn.name + ' muốn vào cuộc trò chuyện — cho vào?';
+  $('tapAsk').hidden = false;
+  tapIn.timer = setTimeout(() => { $('tapAsk').hidden = true; tapIn = null; }, 15000);
+}
+function onJoinAck(d) {
+  if (d.to !== myWalkId()) return;
+  if (!joinWait || joinWait.anchor !== d.anchor) return;
+  clearTimeout(joinWait.timer); joinWait = null;
+  joinAnchorConvo(d.anchor, d.members || []);
+}
+function syncAnchorOnJoin(wid) {
+  const A = anchors.get(myAnchor);
+  if (!A) return;
+  if (!A.members.includes(wid)) { A.members.push(wid); anchorBroadcast(); }
+}
+function syncAnchorOnLeave(wid) {
+  const A = anchors.get(myAnchor);
+  if (!A || !A.members.includes(wid)) return;
+  A.members = A.members.filter((m) => m !== wid);
+  A.left.add(wid);
+  // ground truth là convoSet local, không phải members list (có thể lệch do race) —
+  // mình còn nối ≥1 người thì anchor sống tiếp; chỉ chết khi thật sự còn <2
+  A.members = [...new Set([...A.members, myWalkId(), ...convoSet].filter((m) => m !== wid))];
+  const remaining = [...convoSet].filter((m) => m !== wid).length;   // handler gọi trước khi convoSet xóa wid
+  if (A.members.length < 2 && remaining < 1) {
+    floorSend({ kind: 'anchor', anchor: { id: A.id }, gone: true });
+    dropAnchor(A.id); myAnchor = null;
+  } else anchorBroadcast();
+}
 hooks.dbgEv = dbgEv;
 hooks.dbgLog = () => dbgLog.slice();
 hooks.upsertSeat = upsertSeat;
