@@ -24,19 +24,40 @@ export async function decryptToken(token) {
 
 const ALLOWED_DOMAIN = '@furucrm.com';
 const NOT_FOUND_URL = 'notfound.html';
+const LOGIN_URL = 'https://furu-agentforce.my.site.com/pwas/login'; // TODO: điền URL trang login thật
 
 function allowed(email) {
   return typeof email === 'string' && email.trim().toLowerCase().endsWith(ALLOWED_DOMAIN);
 }
+const SESSION_KEY = 'furu-office-email';
+
+function loadSessionEmail() {
+  try { return sessionStorage.getItem(SESSION_KEY); } catch (e) { return null; }
+}
+function saveSessionEmail(email) {
+  try { sessionStorage.setItem(SESSION_KEY, email); } catch (e) {}
+}
+
 export async function ensureAccess() {
   const token = new URLSearchParams(location.search).get('token');
-  let email = null;
-  try {
-    email = await decryptToken(token);
-  } catch (e) {
-    console.warn('[token]', e.message);
+  if (token) {
+    // Có token trên URL: sai/hết hạn/sai domain -> 404
+    let email = null;
+    try {
+      email = await decryptToken(token);
+    } catch (e) {
+      console.warn('[token]', e.message);
+    }
+    if (allowed(email)) {
+      saveSessionEmail(email);
+      return true;
+    }
+    location.replace(NOT_FOUND_URL);
+    return false;
   }
-  if (allowed(email)) return true;
-  location.replace(NOT_FOUND_URL);
+  // Không có token (vd. replaceState đã xoá query): dùng email trong session
+  if (allowed(loadSessionEmail())) return true;
+  // Không có cả hai -> về login
+  location.replace(LOGIN_URL);
   return false;
 }
