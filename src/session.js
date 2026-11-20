@@ -2116,6 +2116,16 @@ function onFloorData(msg, from) {
     return;
   }
   if (msg.kind === 'gone' && floorHost) { applyPresence(msg, true); return; }
+  // Chỉ về hub THẤP hơn hub hiện tại; tránh hub thấp join hub cao hơn
+  if (msg.kind === 'merge' && Number.isInteger(msg.hub)) {
+    if (floorHub > msg.hub) {
+      dbgEv('floor merge -> hub' + msg.hub);
+      if (floorHost) broadcastFloor({ kind: 'merge', hub: msg.hub }); // báo khách trước
+      // host đợi 300ms cho gói merge tới khách rồi mới huỷ peer; khách đi ngay
+      setTimeout(claimFloor, floorHost ? 300 : 0);
+    }
+    return;
+  }
   if (msg.kind === 'move' && msg.id) { applyPresence(msg, floorHost); return; }
   if (msg.kind === 'say') { onSay(msg, floorHost, false); return; }
   if (msg.kind === 'tap') {
@@ -2190,17 +2200,28 @@ function peerOpts(ice) {
 }
 let reprobeAt = performance.now();
 // Probe thử hub i có host nào trả lời beat không (peer ẩn danh, dùng xong destroy).
-function probeAlive(index, done) {
+// payload (tuỳ chọn): hàm trả về gói cần gửi cho host khi thấy nó sống (trả null thì không gửi).
+function probeAlive(index, done, payload) {
   iceServers().then((ice) => {
     let p;
     try { p = new Peer(undefined, peerOpts(ice)); } catch (e) { done(false); return; }
     let settled = false;
+    let answered = false;
     const fin = (ok) => { if (settled) return; settled = true; try { p.destroy(); } catch (e) {} done(ok); };
     const to = setTimeout(() => fin(false), 8000);
     p.on('open', () => {
       const conn = p.connect(HUBS[index], { reliable: true });
       conn.on('open', () => { try { conn.send({ kind: 'ping' }); } catch (e) {} });
-      conn.on('data', (m) => { if (m && (m.kind === 'beat' || m.kind === 'roster')) { clearTimeout(to); fin(true); } });
+      conn.on('data', (m) => {
+        if (answered || !m || (m.kind !== 'beat' && m.kind !== 'roster')) return;
+        answered = true;
+        clearTimeout(to);
+        const out = payload && payload();
+        if (out) {
+          try { conn.send(out); } catch (e) {}
+          setTimeout(() => fin(true), 1500); // chờ gói đi hết rồi mới destroy peer ẩn danh
+        } else fin(true);
+      });
       conn.on('close', () => fin(false));
       conn.on('error', () => fin(false));
     });
@@ -2238,6 +2259,15 @@ function startFloorWatch(gen) {
     }
     if (!floorLink || !floorLink.open || performance.now() - lastBeat > 8000) claimFloor();
   }, 2500);
+}
+// Host mới chiếm hub i: gọi các host ở hub cao hơn dồn về hub i (khỏi đợi tryLower 40s).
+function mergeHigher(gen, index) {
+  for (let j = index + 1; j < HUBS.length; j++) {
+    probeAlive(j, (ok) => { if (ok) dbgEv('floor merge hub' + j + ' -> hub' + index); }, () => {
+      if (gen !== floorGen || !floorHost || floorHub !== index) return null;
+      return { kind: 'merge', hub: index };
+    });
+  }
 }
 function becomeHost(gen, p, index) {
   floorPeer = p;
@@ -2278,6 +2308,7 @@ function becomeHost(gen, p, index) {
   });
   if (myPresence) broadcastFloor({ kind: 'here', who: myPresence });
   startFloorWatch(gen);
+  mergeHigher(gen, index);
 }
 function becomeClient(gen, p, conn, index) {
   floorPeer = p;
@@ -2300,17 +2331,18 @@ function probeHub(gen, index, ice) {
   if (gen !== floorGen) return;
   const p = new Peer(undefined, peerOpts(ice));
   let settled = false;
-  const next = () => {
+  const next = (why) => {
     if (settled || gen !== floorGen) return;
     settled = true;
+    dbgEv('probe hub' + index + ' bỏ qua: ' + why);
     try { p.destroy(); } catch (e) {}
     scanHub(gen, index + 1);
   };
-  const to = setTimeout(next, 9000);
+  const to = setTimeout(() => next('9s'), 9000);
   p.on('open', () => {
     if (settled || gen !== floorGen) { try { p.destroy(); } catch (e) {} return; }
     const conn = p.connect(HUBS[index], { reliable: true });
-    const beatWait = setTimeout(next, 7000);
+    const beatWait = setTimeout(() => next('7s không beat'), 7000);
     conn.on('open', () => { try { conn.send({ kind: 'ping' }); } catch (e) {} });
     conn.on('data', (msg) => {
       if (!msg) return;
@@ -2323,10 +2355,10 @@ function probeHub(gen, index, ice) {
       if (msg.kind === 'beat') { lastBeat = performance.now(); return; }
       onFloorData(msg, null);
     });
-    conn.on('close', next);
-    conn.on('error', next);
+    conn.on('close', () => next('conn close'));
+    conn.on('error', () => next('conn error'));
   });
-  p.on('error', next);
+  p.on('error', (err) => next('peer ' + (err && err.type)));
 }
 function scanHub(gen, index) {
   if (gen !== floorGen) return;
@@ -2337,13 +2369,14 @@ function scanHub(gen, index) {
     try { p = new Peer(HUBS[index], peerOpts(ice)); }
     catch (e) { scanHub(gen, index + 1); return; }
     let settled = false;
-    const giveUp = () => {
+    const giveUp = (why) => {
       if (settled || gen !== floorGen) return;
       settled = true;
+      dbgEv('scan hub' + index + ' không chiếm được: ' + why);
       try { p.destroy(); } catch (e) {}
       probeHub(gen, index, ice);
     };
-    const to = setTimeout(giveUp, 12000);
+    const to = setTimeout(() => giveUp('timeout 12s'), 12000);
     p.on('open', () => {
       if (settled || gen !== floorGen) { try { p.destroy(); } catch (e) {} return; }
       settled = true;
@@ -2353,7 +2386,7 @@ function scanHub(gen, index) {
     p.on('error', (err) => {
       if (gen !== floorGen || settled) return;
       const type = err && err.type;
-      if (type === 'unavailable-id' || type === 'network' || type === 'server-error' || type === 'socket-error' || type === 'socket-closed') giveUp();
+      if (type === 'unavailable-id' || type === 'network' || type === 'server-error' || type === 'socket-error' || type === 'socket-closed') giveUp(type);
     });
   });
 }
